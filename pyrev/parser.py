@@ -25,7 +25,8 @@ from logging import ERROR, WARNING, INFO, DEBUG
 local_logger = getLogger(__name__)
 local_logger.addHandler(NullHandler())
 
-r_chap = re.compile(r'^(?P<level>=+)(?P<column>[column]?)'
+# Maximum length is temporary.
+r_chap = re.compile(r'^(?P<level>={1,5})(?P<column>[column]?)'
                     r'(?P<sp>\s*)(?P<title>.+)$')
 r_end_block = re.compile(r'^//}(?P<junk>.*)$')
 r_begin_block = re.compile(r'^(?P<prefix>//)(?P<content>.+)$')
@@ -404,7 +405,7 @@ class InlineStateMachine(object):
     def is_start_inline(cls, ch):
         return ch == '@'
 
-
+# TODO: Develop MultiLineStateMachine instead.
 class BlockStateMachine(object):
     BSM_NONE = 'BSM_NONE'
     BSM_PARSE_NAME = 'BSM_PARSE_NAME'
@@ -542,7 +543,7 @@ class BlockStateMachine(object):
 
         def __bsm_name_end():
             assert self._tmp_lst is not None
-            assert self.name is None
+            assert self.name is None, u'name: {}'.format(self.name)
             alnum = string.ascii_letters + string.digits
             name = ''.join(self._tmp_lst)
             self._tmp_lst = []
@@ -579,8 +580,8 @@ class BlockStateMachine(object):
                                 u'Invalid param end at C{}'.format(pos))
                     self.state = BSM_END_PARAM
                 elif ch == '{':
-                    self._error(line_num, uni_line,
-                                u'Invalid param end at C{}'.format(pos))
+                    # e.g. "//lead{"
+                    __bsm_name_end()
                     self.state = BSM_IN_BLOCK
                 else:
                     self._tmp_lst.append(ch)
@@ -816,7 +817,13 @@ class Parser(object):
                                   .format(self.bsm.name, m.group('warn')))
             m = r_chap.match(rstripped)
             if m:
-                self._warning(line_num, uni_line, u'Bookmark in block')
+                # Treat rare exceptions that may happen in "//list"
+                # e.g. "====================================== [1] start
+                # e.g. "====================================== [1] end
+                if (not m.group('column')
+                    and not m.group('sp')
+                    and not m.group('title').startswith('=')):
+                    self._warning(line_num, uni_line, u'Bookmark in block')
             ret = self.bsm.parse_line(line_num, uni_line)
             if ret is None:
                 pass
@@ -841,7 +848,7 @@ class Parser(object):
                 elif rstripped[:1] == '*':
                     self._warning(line_num, uni_line,
                                   (u'Unordered list operator ("*") without'
-                                   u' a space'))
+                                   u' a single space'))
                 elif (len(rstripped) > 1
                       and rstripped[0] in string.digits
                       and rstripped[1] == '.'):
