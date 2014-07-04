@@ -30,9 +30,10 @@ from parser import Parser, ParseProblem
 from pyrev import ReVIEWProject
 
 import os
+import sys
 import traceback
 
-VERSION='0.1'
+VERSION='0.2'
 
 def main():
     parser = ArgumentParser(description=(__doc__),
@@ -46,7 +47,7 @@ def main():
                         help=('aliased to --log=DEBUG'))
     parser.add_argument('-l', '--level_threshold',
                         action='store',
-                        default='ERROR',
+                        default='CRITICAL',
                         help=(u'Error Level for the check.'
                               u' If everything should be accepted, CRITICAL.'))
     parser.add_argument('-v', '--version',
@@ -79,6 +80,7 @@ def main():
     if not os.path.exists(args.filename):
         logger.error(u'"{}" does not exist'.format(args.filename))
         return
+
     elif os.path.isdir(args.filename):
         logger.debug(u'"{}" is a directory. Interprete the whole project'
                      .format(args.filename))
@@ -95,7 +97,8 @@ def main():
                 path = os.path.normpath(u'{}/{}'.format(project.source_dir,
                                                         filename))
                 parser.parse(path, 0, filename)
-                parser._dump()
+                dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
+                parser._dump(dump_func=dump_func)
         except ParseProblem as e:
             logger.error(traceback.format_exc())
             #logger.error(u'{}: {}'.format(type(e).__name__, e))

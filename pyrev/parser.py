@@ -30,7 +30,7 @@ r_chap = re.compile(r'^(?P<level>={1,5})(?P<column>[column]?)'
                     r'(?P<sp>\s*)(?P<title>.+)$')
 r_end_block = re.compile(r'^//}(?P<junk>.*)$')
 r_begin_block = re.compile(r'^(?P<prefix>//)(?P<content>.+)$')
-r_manual_warn = re.compile(r'^#@warn\((?P<warn>.+)\)$')
+r_manual_warn = re.compile(r'^#@(?P<type>.+)\((?P<message>.+)\)$')
 
 
 class ParseProblem(Exception):
@@ -49,7 +49,7 @@ class ParseProblem(Exception):
             content = self.uni_line.rstrip()
         else:
             content = u''
-        return repr(u'{} {}, {}, content: "{}")'
+        return repr(u'{} {} {}, {}, content: "{}")'
                     .format(self.source_name,
                             line,
                             self.desc,
@@ -800,6 +800,7 @@ class Parser(object):
         uni_line = unicode(line, 'utf-8-sig')
         rstripped = uni_line.rstrip()
         logger.debug(u'_parse_line({}): {}'.format(self.bsm.state, rstripped))
+
         if self.bsm.state == BSM_IN_BLOCK:
             # Because they are in block, we don't eat their content but include
             # it in the block
@@ -814,7 +815,7 @@ class Parser(object):
                     self._warning(line_num, uni_line,
                                   (u'Manual warning in block "{}": "{}".'
                                    u' It will be included in the block')
-                                  .format(self.bsm.name, m.group('warn')))
+                                  .format(self.bsm.name, m.group('message')))
             m = r_chap.match(rstripped)
             if m:
                 # Treat rare exceptions that may happen in "//list"
@@ -841,9 +842,17 @@ class Parser(object):
                 elif rstripped[:2] == '#@':  # warning
                     m = r_manual_warn.match(rstripped)
                     if m:
-                        self._warning(line_num, uni_line,
-                                      (u'Manual warning "{}"'
-                                       .format(m.group('warn'))))
+                        # Only "#@warn(manual-warning)" is allowed.
+                        if m.group('type') != 'warn':
+                            self._error(line_num, uni_line,
+                                        (u'Unknown warn-like operation "{}".'
+                                         u' May be "warn". Message: "{}"')
+                                        .format(m.group('type'),
+                                                m.group('message')))
+                        else:
+                            self._warning(line_num, uni_line,
+                                          (u'Manual warning "{}"'
+                                           .format(m.group('message'))))
                         return
                 elif rstripped[:1] == '*':
                     self._warning(line_num, uni_line,
@@ -935,55 +944,61 @@ class Parser(object):
                         bookmark.get(self.BM_SOURCE_CHAP_INDEX)))
 
 
-    def _dump(self, logger=None):
-        logger = logger or self.logger
+    def _dump(self, dump_func=None):
+        '''
+        Dump current state.
+        dump_func is expected to accept an arg for each line.
+        If there's no dump_func, self.logger.debug() will be used
+        '''
+        dump_func = dump_func or (lambda x: self.logger.debug(x))
         if self.bookmarks:
-            logger.debug(u'Bookmarks:')
+            dump_func(u'Bookmarks:')
             for i, bookmark in enumerate(self.bookmarks):
-                logger.debug(u' {}:{}'.format(i,
-                                              self._format_bookmark(bookmark)))
+                dump_func(u' {}:{}'.format(i, self._format_bookmark(bookmark)))
         else:
-            logger.debug(u'No bookmark')
+            dump_func(u'No bookmark')
         if self.chap_to_bookmark:
-            logger.debug(u'chap_to_bookmark:')
+            dump_func(u'chap_to_bookmark:')
             for key in sorted(self.chap_to_bookmark.keys()):
                 bookmark = self.chap_to_bookmark[key]
-                self.logger.debug(u' {}: "{}"'
-                                  .format(key, bookmark[self.BM_TITLE]))
+                dump_func(u' {}: "{}"'.format(key, bookmark[self.BM_TITLE]))
         if self.blocks:
-            logger.debug(u'Blocks:')
+            dump_func(u'Blocks:')
             for block in self.blocks:
-                logger.debug(u' L{} name: "{}", params: {}, lines: {}'
-                             .format(block.line_num,
-                                     block.name,
-                                     block.params,
-                                     len(block.uni_lines)))
+                dump_func(u' L{} name: "{}", params: {}, lines: {}'
+                          .format(block.line_num,
+                                  block.name,
+                                  block.params,
+                                  len(block.uni_lines)))
         else:
-            logger.debug(u'No block')
+            dump_func(u'No block')
 
         if self.inlines:
-            logger.debug(u'Inlines:')
+            dump_func(u'Inlines:')
             for inline in self.inlines:
-                logger.debug(u' L{} name: "{}", "{}"'
-                             .format(inline.line_num,
-                                     inline.name,
-                                     inline.raw_content))
+                dump_func(u' L{} name: "{}", "{}"'
+                          .format(inline.line_num,
+                                  inline.name,
+                                  inline.raw_content))
         else:
-            logger.debug(u'No inline')
+            dump_func(u'No inline')
         if self.problems:
-            logger.debug(u'Problems:')
+            dump_func(u'Problems:')
             for problem in self.problems:
+                name = type(problem).__name__[5]
                 if problem.source_name:
-                    logger.debug(u' {} L{}: {} (content: "{}")'
-                                 .format(problem.source_name,
-                                         problem.line_num,
-                                         problem.desc,
-                                         problem.uni_line.rstrip()))
+                    dump_func(u' [{}] {} L{}: {} (content: "{}")'
+                              .format(name,
+                                      problem.source_name,
+                                      problem.line_num,
+                                      problem.desc,
+                                      problem.uni_line.rstrip()))
                 else:
-                    logger.debug(u' L{}: {} (content: "{}")'
-                                 .format(problem.line_num,
-                                         problem.desc,
-                                         problem.uni_line.rstrip()))
+                    dump_func(u' [{}] L{}: {} (content: "{}")'
+                              .format(name,
+                                      problem.line_num,
+                                      problem.desc,
+                                      problem.uni_line.rstrip()))
         else:
-            logger.debug(u'No problem')
+            dump_func(u'No problem')
 

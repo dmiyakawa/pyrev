@@ -1,3 +1,5 @@
 *~
 *.pyc
 pyrev.egg-info/
+build/
+dist/
