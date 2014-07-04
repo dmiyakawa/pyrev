@@ -33,7 +33,7 @@ import os
 import sys
 import traceback
 
-VERSION='0.2'
+VERSION='0.23'
 
 def main():
     parser = ArgumentParser(description=(__doc__),
@@ -109,7 +109,8 @@ def main():
             parser = Parser(level=level_threshold, logger=logger)
             source_name = os.path.basename(args.filename)
             parser.parse(args.filename, 0, source_name)
-            parser._dump()
+            dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
+            parser._dump(dump_func=dump_func)
         except ParseProblem as e:
             logger.error(traceback.format_exc())
             #logger.error(u'{}: {}'.format(type(e).__name__, e))

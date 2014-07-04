@@ -171,13 +171,21 @@ class InlineStateMachine(object):
     '''
     State machine for a single inline operation.
     '''
-    # TODO: enum?
 
-    ISM_NONE = 'ISM_NONE'  # No state.
-    ISM_AT = 'ISM_AT'  # "@" appeared
+    # e.g. "@<i>{\}}"
+    _inline_escape_allowed = set(['}', '\\'])
+
+    # TODO: enum?
+    # Nothing is happening.
+    ISM_NONE = 'ISM_NONE'
+    # "@" appeared.
+    # -> ISM_INLINE_TAG | ISM_NONE
+    ISM_AT = 'ISM_AT'
     ISM_INLINE_TAG = 'ISM_INLINE_TAG'  # "@<" appeared 
     ISM_END_INLINE_TAG = 'ISM_END_INLINE_TAG'  # "@<...>" appeared
     ISM_INLINE_CONTENT = 'ISM_INLINE_CONTENT' # "@<...>{" appeared
+    # "@<...>{..\}}"
+    ISM_INLINE_CONTENT_BS = 'ISM_INLINE_CONTENT_BS'
     # "@<...>{..@" appeared, which may be wrong
     ISM_INLINE_CONTENT_AT = 'ISM_INLINE_CONTENT_AT'
 
@@ -254,6 +262,9 @@ class InlineStateMachine(object):
         ISM_END_INLINE_TAG = self.ISM_END_INLINE_TAG
         ISM_INLINE_CONTENT = self.ISM_INLINE_CONTENT
         ISM_INLINE_CONTENT_AT = self.ISM_INLINE_CONTENT_AT
+        ISM_INLINE_CONTENT_BS = self.ISM_INLINE_CONTENT_BS
+
+        logger.debug(u' C{} {} {}'.format(pos, self.state, ch))
 
         # Assertions are used to ensure this implementation has no bug.
         # It is unrelated to ParseProblem.
@@ -334,6 +345,9 @@ class InlineStateMachine(object):
             elif ch == '@':
                 self.state = ISM_INLINE_CONTENT_AT
                 return None
+            elif ch == '\\':
+                self.state = ISM_INLINE_CONTENT_BS
+                return None
             else:
                 self.unprocessed.append(ch)
                 return None
@@ -357,7 +371,7 @@ class InlineStateMachine(object):
                 # surrounding inline operation.
                 self.unprocessed.append('@')
                 self.unprocessed.append(ch)
-                self.state == ISM_INLINE_CONTENT
+                self.state = ISM_INLINE_CONTENT
                 return None
             elif ch == '@':
                 self.unprocessed.append('@')
@@ -366,6 +380,19 @@ class InlineStateMachine(object):
                 self.unprocessed.append('@')
                 self.unprocessed.append(ch)
                 self.state == ISM_INLINE_CONTENT
+                return None
+        elif self.state == ISM_INLINE_CONTENT_BS:
+            if ch in self._inline_escape_allowed:
+                self.unprocessed.append(ch)
+                self.state = ISM_INLINE_CONTENT
+                return None
+            else:
+                self._info((u'Backslash inside inline "{}" is'
+                            u' not effective toward "{}".')
+                           .format(self.name, ch))
+                self.unprocessed.append('\\')
+                self.unprocessed.append(ch)
+                self.state = ISM_INLINE_CONTENT
                 return None
 
         logger.error((u'Unexpected state.'
@@ -617,7 +644,8 @@ class BlockStateMachine(object):
                 elif ch == '{':
                     self.state = BSM_IN_BLOCK
                 else:
-                    self._error('Junk at C{}'.format(pos))
+                    self._error(line_num, uni_line,
+                                u'Junk at C{}'.format(pos))
             elif self.state == BSM_IN_BLOCK:
                 self._error('Junk at C{}'.format(pos))
         self.problems.extend(self._ism.problems)

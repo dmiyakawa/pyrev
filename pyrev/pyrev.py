@@ -126,7 +126,7 @@ class ReVIEWProject(object):
 
     def __init__(self, source_dir, **kwargs):
         self.reset()
-        self.init(source_dir, **kwargs)
+        self.init(os.path.normpath(source_dir), **kwargs)
 
     def reset(self):
         # Where the whole source files are.
