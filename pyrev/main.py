@@ -35,6 +35,7 @@ import traceback
 
 VERSION='0.23'
 
+
 def main():
     parser = ArgumentParser(description=(__doc__),
                             formatter_class=ArgumentDefaultsHelpFormatter)
@@ -99,7 +100,7 @@ def main():
                 parser.parse(path, 0, filename)
                 dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
                 parser._dump(dump_func=dump_func)
-        except ParseProblem as e:
+        except ParseProblem:
             logger.error(traceback.format_exc())
             #logger.error(u'{}: {}'.format(type(e).__name__, e))
     else:
@@ -111,7 +112,7 @@ def main():
             parser.parse(args.filename, 0, source_name)
             dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
             parser._dump(dump_func=dump_func)
-        except ParseProblem as e:
+        except ParseProblem:
             logger.error(traceback.format_exc())
             #logger.error(u'{}: {}'.format(type(e).__name__, e))
 

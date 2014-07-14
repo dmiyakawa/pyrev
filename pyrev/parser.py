@@ -34,10 +34,10 @@ r_manual_warn = re.compile(r'^#@(?P<type>.+)\((?P<message>.+)\)$')
 
 
 class ParseProblem(Exception):
-    def __init__(self, source_name, line_num, uni_line, desc):
+    def __init__(self, source_name, line_num, raw_content, desc):
         self.source_name = source_name
         self.line_num = line_num
-        self.uni_line = uni_line
+        self.raw_content = raw_content
         self.desc = desc
 
     def __str__(self):
@@ -45,11 +45,17 @@ class ParseProblem(Exception):
             line = 'L{}'.format(self.line_num)
         else:
             line = 'L?'
-        if self.uni_line:
-            content = self.uni_line.rstrip()
+        if self.raw_content:
+            if type(self.raw_content) in [str, unicode]:
+                content = u'"{}"'.format(self.raw_content.rstrip())
+            elif type(self.raw_content) == list:
+                lst = []
+                for rc_part in self.raw_content:
+                    lst.append(rc_part.rstrip())
+                content = u'\n' + u'\n'.join(lst)
         else:
             content = u''
-        return repr(u'{} {} {}, {}, content: "{}")'
+        return repr(u'{} {} {}, {}, content: {})'
                     .format(self.source_name,
                             line,
                             self.desc,
@@ -165,6 +171,13 @@ class Block(object):
         self.params = tuple(params)
         self.uni_lines = uni_lines
         self.line_num = line_num
+
+    def __str__(self):
+        return (u' L{} "{}" {} (lines: {})'
+                .format(self.line_num,
+                        self.name,
+                        self.params,
+                        len(self.uni_lines)))
 
 
 class InlineStateMachine(object):
@@ -327,7 +340,7 @@ class InlineStateMachine(object):
                             .format(pos, ch))
                 # Because we are sure we saw "@<tagname>", interpret
                 # it as "@<tagname>{}" and consume it.
-                new_inline = Inline(self.name, '', self.line_num)
+                new_inline = Inline(self.name, '', self.line_num, pos)
                 self.reset()
                 if ch == '@':
                     self.state = ISM_AT
@@ -339,7 +352,7 @@ class InlineStateMachine(object):
             if ch == '}':
                 # Finished parsing a single inline. Return it and reset.
                 content = ''.join(self.unprocessed)
-                new_inline = Inline(self.name, content, self.line_num)
+                new_inline = Inline(self.name, content, self.line_num, pos)
                 self.reset()
                 return new_inline
             elif ch == '@':
@@ -355,7 +368,7 @@ class InlineStateMachine(object):
             if ch == '}':
                 # Finished parsing a single inline. Return it and reset.
                 content = ''.join(self.unprocessed) + '@'
-                new_inline = Inline(self.name, content, self.line_num)
+                new_inline = Inline(self.name, content, self.line_num, pos)
                 self.reset()
                 return new_inline
             elif ch == '<':
@@ -589,7 +602,6 @@ class BlockStateMachine(object):
             self.name = name
 
         self._tmp_lst = []
-        self._params = []
         self._ism = InlineStateMachine(line_num,
                                        uni_line,
                                        source_name=self.source_name,
@@ -624,7 +636,7 @@ class BlockStateMachine(object):
                     new_param = u'{}{}'.format(''.join(self._tmp_lst),
                                                ''.join(self._ism.unprocessed))
                     logger.debug(u'New param "{}"'.format(new_param))
-                    self._params.append(new_param)
+                    self.params.append(new_param)
                     self._ism.reset()
                     self._tmp_lst = []
                     self.state = BSM_END_PARAM
@@ -750,26 +762,47 @@ class Parser(object):
         self.logger = logger
         self.level = level
 
+        def __check_inline_default(inline):
+            pass
+
+        def __check_block_default(block, num_params):
+            if len(block.params) != num_params:
+                self._error(block.line_num, 
+                            block.uni_lines,
+                            u'Illegal number of params ({} > {})'
+                            .format(len(block.params), num_params))
+        cid = __check_inline_default
+        # //noindent
+        cbd_0 = lambda block: __check_block_default(block, 0)
+        # //lead[...]
+        cbd_1 = lambda block: __check_block_default(block, 1)
+        # //footnote[fnname][content]
+        cbd_2 = lambda block: __check_block_default(block, 2)
+
         # TODO:
         # - map list to list
         # - map fn to footnote
-        self.allowed_inlines = set([('fn', 1),
-                                    ('img', 1),
-                                    ('ami', 1),
-                                    ('b', 1),
-                                    ('i', 1),
-                                    ('u', 1),
-                                    ('br', 1),
-                                    ('list', 1)])
-        # Note: table is special. we handle it somewhere else.
-        # (name, num_of_params, needs_content)
-        self.allowed_blocks = set([('table', 2, True),
-                                   ('list', 2, True),
-                                   ('emlist', 2, True),
-                                   ('image', 2, True),
-                                   ('lead', 1, True),
-                                   ('footnote', 2, False),
-                                   ('noindent', 0, False)])
+        self.allowed_inlines = {'fn': cid,
+                                'img': cid,
+                                'ami': cid,
+                                'b': cid,
+                                'i': cid,
+                                'u': cid,
+                                'br': cid, 
+                                'list': cid}
+
+
+        # (precheck, postcheck)
+        # precheck ... called when the first line is determined
+        #              e.g. //footnote[][]  <-- check no '{' is written
+        # postcheck ... 
+        self.allowed_blocks = {'table': (None, cbd_2),
+                               'list': (None, cbd_2),
+                               'emlist': (None, cbd_2),
+                               'image': (None, cbd_2),
+                               'lead': (None, cbd_1),
+                               'footnote': (None, cbd_2),
+                               'noindent': (None, cbd_0)}
 
         self.source_name = None
         self.problems = []
@@ -818,6 +851,27 @@ class Parser(object):
                             u'Block "{}" is not ended'.format(self.bsm.name))
         finally:
             if f: f.close()
+
+        for block in self.blocks:
+            block_checkers = self.allowed_blocks.get(block.name)
+            if not block_checkers:
+                self._error(block.line_num,
+                            block.uni_lines,
+                            u'Undefined block "{}" found'
+                            .format(block.name))
+            else:
+                block_post_check = block_checkers[1]
+                block_post_check(block)
+
+        for inline in self.inlines:
+            inline_checker = self.allowed_inlines.get(inline.name)
+            if not inline_checker:
+                self._error(inline.line_num,
+                            inline.raw_content,
+                            u'Undefined inline "{}" found at C{}'
+                            .format(inline.name, inline.position))
+            else:
+                inline_checker(inline)
 
     def _parse_line(self, line_num, line, logger=None):
         logger = logger or self.logger
@@ -993,11 +1047,7 @@ class Parser(object):
         if self.blocks:
             dump_func(u'Blocks:')
             for block in self.blocks:
-                dump_func(u' L{} name: "{}", params: {}, lines: {}'
-                          .format(block.line_num,
-                                  block.name,
-                                  block.params,
-                                  len(block.uni_lines)))
+                dump_func(str(block))
         else:
             dump_func(u'No block')
 
@@ -1014,19 +1064,29 @@ class Parser(object):
             dump_func(u'Problems:')
             for problem in self.problems:
                 name = type(problem).__name__[5]
+                if problem.raw_content:
+                    if type(problem.raw_content) in [str, unicode]:
+                        content = u'"{}"'.format(problem.raw_content.rstrip())
+                    elif type(problem.raw_content) == list:
+                        lst = []
+                        for rc_part in problem.raw_content:
+                            lst.append(rc_part.rstrip())
+                        content = u'\n' + u'\n'.join(lst)
+                else:
+                    content = u''
                 if problem.source_name:
                     dump_func(u' [{}] {} L{}: {} (content: "{}")'
                               .format(name,
                                       problem.source_name,
                                       problem.line_num,
                                       problem.desc,
-                                      problem.uni_line.rstrip()))
+                                      content))
                 else:
                     dump_func(u' [{}] L{}: {} (content: "{}")'
                               .format(name,
                                       problem.line_num,
                                       problem.desc,
-                                      problem.uni_line.rstrip()))
+                                      content))
         else:
             dump_func(u'No problem')
 
