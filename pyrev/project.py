@@ -58,6 +58,7 @@ def _verify_filename(source_dir, filename, logger=local_logger):
     if os.path.islink(abs_path):
         logger.warn(u'"{}" is a symlink. Ignore.'.format(filename))
         return None
+    logger.debug('"{}" is verified as safe'.format(abs_path))
     return abs_path
 
 
@@ -79,6 +80,32 @@ def _is_appropriate_file(source_dir, filename):
 
 def _is_appropriate_re_file(source_dir, filename):
     return _verify_re_filename(source_dir, filename) is not None
+
+class ProjectImage(object):
+    def __init__(self, rel_path, parent_filename, image_dir):
+        self.parent_filename = parent_filename
+        (head, tail) = os.path.splitext(parent_filename)
+        # chap1.re -> 'chap1'
+        self.parent_id = head
+        # '.re'
+        self.parent_tail = tail
+        # e.g. 'images/chap1-image1.png'
+        self.rel_path = rel_path
+        self.image_dir = image_dir
+        parts = os.path.split(self.rel_path)
+        assert (len(parts) == 2 and parts[0] == self.image_dir)
+        # 'chap1-image1.png' -> ('chap1-image1', '.png')
+        (head, tail) = os.path.splitext(parts[1])
+        # e.g. 'chap1-image1' should start with 'chap1-'
+        assert head.startswith('{}-'.format(self.parent_id))
+        # e.g. 'images/chap1-image1.png' -> image1
+        self.id = head[len(self.parent_id)+1:]
+        assert self.id
+        self.tail = tail
+
+    def __str__(self):
+        return u'{} (parent: {})'.format(self.rel_path,
+                                         self.parent_filename)
 
 
 class ReVIEWProject(object):
@@ -132,13 +159,18 @@ class ReVIEWProject(object):
         # Where the whole source files are.
         self.source_dir = None
         self._catalog_files = []
-        # Contains all the chapter files for this project,
-        # including predef/postdef files.
+        # Contains all chapter files for this project.
+        # This includes predef/postdef files.
         # Each name does not contain source_dir part.
         self.source_filenames = []
 
         self.predef_filenames = []
         self.postdef_filenames = []
+
+        # Possible "draft" files that are not included in catalog.yml
+        # but in the source_dir.
+        # TODO:-)
+        # self.draft_filenames = []
 
         # Either self.parts or self.chaps is available. NOT both.
         # When PART (in catalog.yml or as a single file) is available,
@@ -152,6 +184,13 @@ class ReVIEWProject(object):
         # self.chaps = ['chap1.re', 'chap2.re', 'chap3.re', 'chap4.re']
         self.parts = None
         self.chaps = None
+
+        self.image_dir = None
+        # {'chap1.re': [ProjectImage, ...]}
+        self.images = {}
+
+        # image files those are not mapped
+        self.unmappable_images = []
 
         # Should have correct file name for config.yml (e.g. u'config.yml')
         self.config_file_name = None
@@ -183,9 +222,9 @@ class ReVIEWProject(object):
         Returns False otherwise, where this instance will not be usable.
         '''
         logger = kwargs.get('logger') or local_logger
-        logger.debug('init()')
         self.logger = logger
         self.source_dir = source_dir
+        logger.debug(u'init(source_dir: "{}")'.format(self.source_dir))
 
         first_candidate = kwargs.get('first_candidate')
         if not self._find_and_parse_review_config(first_candidate):
@@ -203,6 +242,15 @@ class ReVIEWProject(object):
                              .format(source_dir))
             return False
         assert (not self.parts) or (not self.chaps)
+
+        self.image_dir = kwargs.get('image_dir', 'images')
+        self.image_dir_path = os.path.normpath('{}/{}'.format(self.source_dir,
+                                                              self.image_dir))
+        if not os.path.isdir(self.image_dir_path):
+            self.logger.info(u'"{}"({}) is not a directory'
+                             .format(self.image_dir, self.image_dir_path))
+        self.images = {}
+        self._recognize_image_files()
 
         # TODO: Check more..
 
@@ -235,7 +283,7 @@ class ReVIEWProject(object):
         check if it is really an appropriate config for Re:VIEW.
         If it looks appropriate, set up member variables too.
         '''
-        self.logger.debug(u'_try_parse_config_yml({})'.format(candidate))
+        self.logger.debug(u'_try_parse_review_config({})'.format(candidate))
         candidate_path = os.path.join(self.source_dir, candidate)
         if not os.path.isfile(candidate_path):
             return False
@@ -265,7 +313,6 @@ class ReVIEWProject(object):
         self.logger.debug(u'_recognize_catalog_files()')
         if self._recognize_new_catalog_files():
             return True
-        self.logger.debug(u'Try recognizing legacy catalog files.')
         return self._recognize_legacy_catalog_files()
 
     def _recognize_new_catalog_files(self):
@@ -367,9 +414,10 @@ class ReVIEWProject(object):
         which has been used before Re:VIEW version 1.3.
         '''
         logger = self.logger
+        self.logger.debug('_recognize_legacy_catalog_files()')
         # First check if at least "CHAPS" file exists or not.
         # If not, abort this procedure immediately.
-        chaps_path = _verify_filename(self.source_dir, 'CHAPS')
+        chaps_path = _verify_filename(self.source_dir, 'CHAPS', logger)
         if not chaps_path:
             self.logger.error('No valid CHAPS file is available.')
             return False
@@ -554,6 +602,45 @@ class ReVIEWProject(object):
             return True
         else:
             return False
+
+    def _recognize_image_files(self):
+        parent_filenames = sorted(self.source_filenames)
+        image_filenames = sorted(os.listdir(self.image_dir_path))
+        i_parents = 0
+        i_images = 0
+        # Compare two lists from both tops.
+        while (i_parents < len(parent_filenames)
+               and i_images < len(image_filenames)):
+            parent_filename  = parent_filenames[i_parents]
+            (parent_id, _) = os.path.splitext(parent_filename)
+            image_filename = image_filenames[i_images]
+            rel_path = '{}/{}'.format(self.image_dir, image_filename)
+
+            (head, tail) = os.path.splitext(image_filename)
+            if head.startswith('{}-'.format(parent_id)):
+                # If the image file starts with the id, it should belong
+                # to the parent. Create a new object and append it to a list.
+                # Increment index for the image list only, because
+                # next image file may have same parent.
+                # e.g.
+                # parents: ['chap1.re', 'chap2.re']
+                # images:  ['images/chap1-test1.png', 'images/chap1-test2.png']
+                pi = ProjectImage(rel_path=rel_path,
+                                  parent_filename=parent_filename,
+                                  image_dir=self.image_dir)
+                lst = self.images.setdefault(parent_filename, [])
+                lst.append(pi)
+                i_images += 1
+            elif parent_id < head:
+                # e.g.
+                # parents: ['chap1.re', 'chap2.re']
+                # images:  ['images/chap2-test1.png', 'images/chap3-test2.png']
+                self.images.setdefault(parent_filename, [])
+                i_parents += 1
+            else:
+                self.unmappable_images.append(image_filename)
+                i_images += 1
+
 
     def _log_debug(self, logger=None):
         logger = logger or self.logger

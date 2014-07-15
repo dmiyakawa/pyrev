@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+import os
 import re
 import string
 
@@ -166,18 +167,31 @@ class Inline(object):
 
 
 class Block(object):
-    def __init__(self, name, params, uni_lines, line_num):
+    def __init__(self, name, params, has_content, uni_lines, line_num):
+        '''
+        has_content: True if the block has content and thus needs to be ended
+                     with "//}" line. This is False typically with
+                     "footnote", "label", etc.
+        uni_lines: a list of string(unicode) lines
+        '''
         self.name = name
         self.params = tuple(params)
+        self.has_content = has_content
         self.uni_lines = uni_lines
         self.line_num = line_num
 
     def __str__(self):
-        return (u' L{} "{}" {} (lines: {})'
-                .format(self.line_num,
-                        self.name,
-                        self.params,
-                        len(self.uni_lines)))
+        if self.has_content:
+            return (u' L{} "{}" {} (lines: {})'
+                    .format(self.line_num,
+                            self.name,
+                            self.params,
+                            len(self.uni_lines)))
+        else:
+            return (u' L{} "{}" {} (no content)'
+                    .format(self.line_num,
+                            self.name,
+                            self.params))
 
 
 class InlineStateMachine(object):
@@ -205,12 +219,14 @@ class InlineStateMachine(object):
     def __init__(self,
                  line_num,
                  uni_line,
+                 parser=None,
                  source_name=None,
                  level=ParseError.LEVEL,
                  logger=local_logger):
         self.line_num = line_num
         self.uni_line = uni_line
         self.logger = logger
+        self.parser = parser
         self.source_name = source_name
         self.level = level
         self.problems = []
@@ -341,6 +357,8 @@ class InlineStateMachine(object):
                 # Because we are sure we saw "@<tagname>", interpret
                 # it as "@<tagname>{}" and consume it.
                 new_inline = Inline(self.name, '', self.line_num, pos)
+                if self.parser:
+                    self.parser._inline_postparse_check(new_inline)
                 self.reset()
                 if ch == '@':
                     self.state = ISM_AT
@@ -353,6 +371,8 @@ class InlineStateMachine(object):
                 # Finished parsing a single inline. Return it and reset.
                 content = ''.join(self.unprocessed)
                 new_inline = Inline(self.name, content, self.line_num, pos)
+                if self.parser:
+                    self.parser._inline_postparse_check(new_inline)
                 self.reset()
                 return new_inline
             elif ch == '@':
@@ -369,6 +389,8 @@ class InlineStateMachine(object):
                 # Finished parsing a single inline. Return it and reset.
                 content = ''.join(self.unprocessed) + '@'
                 new_inline = Inline(self.name, content, self.line_num, pos)
+                if self.parser:
+                    self.parser._inline_postparse_check(new_inline)
                 self.reset()
                 return new_inline
             elif ch == '<':
@@ -445,6 +467,7 @@ class InlineStateMachine(object):
     def is_start_inline(cls, ch):
         return ch == '@'
 
+
 # TODO: Develop MultiLineStateMachine instead.
 class BlockStateMachine(object):
     BSM_NONE = 'BSM_NONE'
@@ -454,10 +477,12 @@ class BlockStateMachine(object):
     BSM_IN_BLOCK = 'BSM_IN_BLOCK'
 
     def __init__(self,
+                 parser=None,
                  source_name=None,
                  level=ParseError.LEVEL,
                  logger=local_logger):
         self.logger = logger
+        self.parser = parser
         self.source_name = source_name
         # Same as "acceptable_level"
         self.level = level
@@ -473,6 +498,7 @@ class BlockStateMachine(object):
         self.start_line_num = None
         self.params = []
         self.uni_lines = []
+        self._unfinished_block = None
 
     def _error(self, line_num, uni_line, desc):
         self.problems.append(ParseProblem.error(self.level,
@@ -546,17 +572,21 @@ class BlockStateMachine(object):
             return uni_line
         elif self.state == BSM_IN_BLOCK:
             if m_end:
+                # Reached "//}"
                 logger.debug(u'Block "{}" ended at L{}'
                              .format(self.name, line_num))
                 if m_end.group('junk'):
                     self._error('Junk after block end.')
-                # (name, params, raw_content, line_num):
-                new_block = Block(name=self.name,
-                                  params=self.params,
-                                  uni_lines=self.uni_lines,
-                                  line_num=self.start_line_num)
+                    
+                new_block = self._unfinished_block
+                assert new_block
+                new_block.uni_lines = self.uni_lines
+                if self.parser:
+                    self.parser._block_lastline_check(new_block)
                 self.reset()
                 return new_block
+            else:
+                self.uni_lines.append(uni_line)
         else:
             raise NotImplementedError()
 
@@ -604,12 +634,13 @@ class BlockStateMachine(object):
         self._tmp_lst = []
         self._ism = InlineStateMachine(line_num,
                                        uni_line,
+                                       parser=self.parser,
                                        source_name=self.source_name,
                                        level=self.level,
                                        logger=logger)
         self.state = BSM_PARSE_NAME
         for pos, ch in enumerate(content, pos_start):
-            logger.debug(u'{} {} {}'.format(pos, self.state, ch))
+            logger.debug(u'C{} ({}) \'{}\''.format(pos, self.state, ch))
             if self.state == BSM_PARSE_NAME:
                 if ch == '[':
                     __bsm_name_end()
@@ -622,6 +653,14 @@ class BlockStateMachine(object):
                     # e.g. "//lead{"
                     __bsm_name_end()
                     self.state = BSM_IN_BLOCK
+                    self._unfinished_block = Block(name=self.name,
+                                                   params=(),
+                                                   has_content=True,
+                                                   uni_lines=[],
+                                                   line_num=line_num)
+                    if self.parser:
+                        self.parser._block_firstline_check(
+                            self._unfinished_block)
                 else:
                     self._tmp_lst.append(ch)
             elif self.state == BSM_IN_PARAM:
@@ -635,7 +674,8 @@ class BlockStateMachine(object):
                     # (We may want to implement flush() method on ism)
                     new_param = u'{}{}'.format(''.join(self._tmp_lst),
                                                ''.join(self._ism.unprocessed))
-                    logger.debug(u'New param "{}"'.format(new_param))
+                    logger.debug(u'New param "{}"'
+                                 .format(new_param))
                     self.params.append(new_param)
                     self._ism.reset()
                     self._tmp_lst = []
@@ -655,6 +695,14 @@ class BlockStateMachine(object):
                     self.state = BSM_IN_PARAM
                 elif ch == '{':
                     self.state = BSM_IN_BLOCK
+                    self._unfinished_block = Block(name=self.name,
+                                                   params=self.params,
+                                                   has_content=True,
+                                                   uni_lines=[],
+                                                   line_num=line_num)
+                    if self.parser:
+                        self.parser._block_firstline_check(
+                            self._unfinished_block)
                 else:
                     self._error(line_num, uni_line,
                                 u'Junk at C{}'.format(pos))
@@ -668,9 +716,12 @@ class BlockStateMachine(object):
             # e.g. "//noident"
             __bsm_name_end()
             new_block = Block(name=self.name,
-                              params=[],
+                              params=(),
+                              has_content=False,
                               uni_lines=[],
                               line_num=line_num)
+            if self.parser:
+                self.parser._block_firstline_check(new_block)
             self.reset()
             return new_block
 
@@ -684,8 +735,11 @@ class BlockStateMachine(object):
             # name, params, raw_content, line_num):
             new_block = Block(name=self.name,
                               params=self.params,
+                              has_content=False,
                               uni_lines=[],
                               line_num=line_num)
+            if self.parser:
+                self.parser._block_firstline_check(new_block)
             self.reset()
             return new_block
 
@@ -758,9 +812,39 @@ class Parser(object):
                                                self.logger))
 
 
-    def __init__(self, level=ERROR, logger=local_logger):
+    def __init__(self, project=None, level=ERROR, logger=local_logger):
+        self.project = project
         self.logger = logger
         self.level = level
+
+        def __image_file_exist(block):
+            if not self.project:
+                return
+            assert block.name == u'image', block.name
+            (source_id, _) = os.path.splitext(self.source_name)
+            image_id = block.params[0]
+            imgs = self.project.images.get(self.source_name)
+            
+            self.logger.info('{}, {}'.format(map(lambda img: img.id, imgs),
+                                             image_id))
+
+            image_exist = reduce(lambda x, y: x or image_id == y.id,
+                                imgs, False)
+            if not image_exist:
+                image_id_wrong = reduce(lambda x, y: x or
+                                        image_id == '{}-{}'.format(source_id,
+                                                                   y.id),
+                                        imgs, False)
+                if image_id_wrong:
+                    self._warning(block.line_num,
+                                  block.uni_lines,
+                                  u'"{}" includes prefix ("{}-")'
+                                  .format(image_id, source_id))
+                else:
+                    self._error(block.line_num,
+                                block.uni_lines,
+                                u'Image file for image "{}" does not exist'
+                                .format(image_id))
 
         def __check_inline_default(inline):
             pass
@@ -769,8 +853,11 @@ class Parser(object):
             if len(block.params) != num_params:
                 self._error(block.line_num, 
                             block.uni_lines,
-                            u'Illegal number of params ({} > {})'
-                            .format(len(block.params), num_params))
+                            u'Illegal number of params ("{}": {} > {})'
+                            .format(block.name,
+                                    len(block.params), num_params))
+
+
         cid = __check_inline_default
         # //noindent
         cbd_0 = lambda block: __check_block_default(block, 0)
@@ -779,30 +866,40 @@ class Parser(object):
         # //footnote[fnname][content]
         cbd_2 = lambda block: __check_block_default(block, 2)
 
-        # TODO:
-        # - map list to list
-        # - map fn to footnote
-        self.allowed_inlines = {'fn': cid,
-                                'img': cid,
-                                'ami': cid,
-                                'b': cid,
-                                'i': cid,
-                                'u': cid,
-                                'br': cid, 
-                                'list': cid}
 
+        # (postparse_check, endfile_check)
+        # postparse_check ... called when the inline is ended.
+        # endfile_check ... called after the whole file is parsed.
+        self.allowed_inlines = {'href': (cid, None),
+                                'fn': (cid, None),
+                                'img': (cid, None),
+                                'ami': (cid, None),
+                                'b': (cid, None),
+                                'i': (cid, None),
+                                'u': (cid, None),
+                                'm': (cid, None),
+                                'em': (cid, None),
+                                'tt': (cid, None),
+                                'br': (cid, None),
+                                'code': (cid, None),
+                                'list': (cid, None),
+                                'table': (cid, None),
+                                'chap': (cid, None)}
 
-        # (precheck, postcheck)
-        # precheck ... called when the first line is determined
-        #              e.g. //footnote[][]  <-- check no '{' is written
-        # postcheck ... 
-        self.allowed_blocks = {'table': (None, cbd_2),
-                               'list': (None, cbd_2),
-                               'emlist': (None, cbd_2),
-                               'image': (None, cbd_2),
-                               'lead': (None, cbd_1),
-                               'footnote': (None, cbd_2),
-                               'noindent': (None, cbd_0)}
+        # (preparse_check, postparse_check, endfile_check)
+        # firstline_check ... called when the first line is parsed
+        #                    e.g. //footnote[][]  <-- check no '{' is written
+        # lastline_check ... called when the last line is parsed.
+        #                    This won't happen for one-line blocks.
+        # endfile_check
+        self.allowed_blocks = {'table': (None, cbd_2, None),
+                               'list': (None, cbd_2, None),
+                               'emlist': (None, cbd_1, None),
+                               'listnum': (None, cbd_2, None),
+                               'image': (__image_file_exist, cbd_2, None),
+                               'lead': (None, cbd_0, None),
+                               'footnote': (None, cbd_2, None),
+                               'noindent': (None, cbd_0, None)}
 
         self.source_name = None
         self.problems = []
@@ -840,7 +937,8 @@ class Parser(object):
         f = None
         try:
             f = file(path)
-            self.bsm = BlockStateMachine(source_name=self.source_name,
+            self.bsm = BlockStateMachine(parser=self,
+                                         source_name=self.source_name,
                                          level=self.level,
                                          logger=self.logger)
             self.chap_index = 0
@@ -852,26 +950,12 @@ class Parser(object):
         finally:
             if f: f.close()
 
-        for block in self.blocks:
-            block_checkers = self.allowed_blocks.get(block.name)
-            if not block_checkers:
-                self._error(block.line_num,
-                            block.uni_lines,
-                            u'Undefined block "{}" found'
-                            .format(block.name))
-            else:
-                block_post_check = block_checkers[1]
-                block_post_check(block)
-
         for inline in self.inlines:
-            inline_checker = self.allowed_inlines.get(inline.name)
-            if not inline_checker:
-                self._error(inline.line_num,
-                            inline.raw_content,
-                            u'Undefined inline "{}" found at C{}'
-                            .format(inline.name, inline.position))
-            else:
-                inline_checker(inline)
+            self._inline_endfile_check(inline)
+
+        for block in self.blocks:
+            self._block_endfile_check(block)
+
 
     def _parse_line(self, line_num, line, logger=None):
         logger = logger or self.logger
@@ -959,7 +1043,9 @@ class Parser(object):
                     # bsm eats it.
                     return
 
-                ism = InlineStateMachine(line_num, uni_line,
+                ism = InlineStateMachine(line_num,
+                                         uni_line,
+                                         parser=self,
                                          source_name=self.source_name,
                                          level=self.level,
                                          logger=logger)
@@ -1026,6 +1112,47 @@ class Parser(object):
                         bookmark.get(self.BM_SOURCE_CHAP_INDEX)))
 
 
+    def _inline_postparse_check(self, inline):
+        inline_checkers = self.allowed_inlines.get(inline.name)
+        if not inline_checkers:
+            self._error(inline.line_num,
+                        inline.raw_content,
+                        u'Undefined inline "{}" found at C{}'
+                        .format(inline.name, inline.position))
+        elif inline_checkers[0]:
+            postparse_checker = inline_checkers[0]
+            postparse_checker(inline)
+
+    def _inline_endfile_check(self, inline):
+        inline_checkers = self.allowed_inlines.get(inline.name)
+        if inline_checkers and inline_checkers[1]:
+            endfile_checker = inline_checkers[1]
+            endfile_checker(inline)
+
+    def _block_firstline_check(self, block):
+        block_checkers = self.allowed_blocks.get(block.name)
+        if not block_checkers:
+            self._error(block.line_num,
+                        block.uni_lines,
+                        u'Undefined block "{}" found'
+                        .format(block.name))
+        elif block_checkers[0]:
+            firstline_checker = block_checkers[0]
+            firstline_checker(block)
+
+    def _block_lastline_check(self, block):
+        block_checkers = self.allowed_blocks.get(block.name)
+        if block_checkers and block_checkers[1]:
+            lastline_checker = block_checkers[1]
+            lastline_checker(block)
+
+    def _block_endfile_check(self, block):
+        block_checkers = self.allowed_blocks.get(block.name)
+        if block_checkers and block_checkers[2]:
+            endfile_checker = block_checkers[2]
+            endfile_checker(block)
+
+
     def _dump(self, dump_func=None):
         '''
         Dump current state.
@@ -1063,7 +1190,7 @@ class Parser(object):
         if self.problems:
             dump_func(u'Problems:')
             for problem in self.problems:
-                name = type(problem).__name__[5]
+                problem_name = type(problem).__name__[5]
                 if problem.raw_content:
                     if type(problem.raw_content) in [str, unicode]:
                         content = u'"{}"'.format(problem.raw_content.rstrip())
@@ -1075,18 +1202,16 @@ class Parser(object):
                 else:
                     content = u''
                 if problem.source_name:
-                    dump_func(u' [{}] {} L{}: {} (content: "{}")'
-                              .format(name,
+                    dump_func(u' [{}] {} L{}: {}'
+                              .format(problem_name,
                                       problem.source_name,
                                       problem.line_num,
-                                      problem.desc,
-                                      content))
+                                      problem.desc))
                 else:
-                    dump_func(u' [{}] L{}: {} (content: "{}")'
-                              .format(name,
+                    dump_func(u' [{}] L{}: {}'
+                              .format(problem_name,
                                       problem.line_num,
-                                      problem.desc,
-                                      content))
+                                      problem.desc))
         else:
             dump_func(u'No problem')
 

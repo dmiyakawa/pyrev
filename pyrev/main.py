@@ -27,7 +27,7 @@ from logging import getLogger, StreamHandler
 from logging import CRITICAL, ERROR, WARNING, INFO, DEBUG
 
 from parser import Parser, ParseProblem
-from pyrev import ReVIEWProject
+from project import ReVIEWProject
 
 import os
 import sys
@@ -78,21 +78,25 @@ def main():
     else:
         raise RuntimeError(u'Unknown level "{}"'.format(args.level_threshold))
 
-    if not os.path.exists(args.filename):
+    file_path = os.path.abspath(args.filename)
+
+    if not os.path.exists(file_path):
         logger.error(u'"{}" does not exist'.format(args.filename))
         return
 
-    elif os.path.isdir(args.filename):
+    elif os.path.isdir(file_path):
         logger.debug(u'"{}" is a directory. Interprete the whole project'
-                     .format(args.filename))
-        source_dir = ReVIEWProject.guess_source_dir(args.filename)
+                     .format(file_path))
+        source_dir = ReVIEWProject.guess_source_dir(file_path)
         logger.debug(u'source_dir: {}'.format(source_dir))
+
         project = ReVIEWProject(source_dir, logger=logger)
         project.parse_source_files()
         project._log_bookmarks()
         project._log_debug()
         try:
-            parser = Parser(level=level_threshold, logger=logger)
+            parser = Parser(project=project,
+                            level=level_threshold, logger=logger)
             for filename in project.source_filenames:
                 logger.debug('Parsing "{}"'.format(filename))
                 path = os.path.normpath(u'{}/{}'.format(project.source_dir,
@@ -107,7 +111,12 @@ def main():
         logger.debug(u'"{}" is a file. Interpret a single script.'
                      .format(args.filename))
         try:
-            parser = Parser(level=level_threshold, logger=logger)
+            source_dir = os.path.dirname(os.path.abspath(file_path))
+            project = ReVIEWProject(source_dir, logger=logger)
+            project.parse_source_files()
+
+            parser = Parser(project=project,
+                            level=level_threshold, logger=logger)
             source_name = os.path.basename(args.filename)
             parser.parse(args.filename, 0, source_name)
             dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
