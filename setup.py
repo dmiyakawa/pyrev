@@ -18,7 +18,8 @@ setup(name='pyrev',
       include_package_data=True,
       license='Apache License 2.0',
       entry_points={
-        'console_scripts': 'pyrev = pyrev.main:main'
+        'console_scripts': ['pyrev = pyrev.main:main',
+                            'pyrev-devel = pyrev.main:devel']
       },
       url='https://github.com/dmiyakawa/pyrev',
       classifiers=[

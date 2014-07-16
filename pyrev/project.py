@@ -604,6 +604,10 @@ class ReVIEWProject(object):
             return False
 
     def _recognize_image_files(self):
+        if not os.path.isdir(self.image_dir_path):
+            self.logger.debug(u'No image_dir ("{}")'
+                              .format(self.image_dir_path))
+            return
         parent_filenames = sorted(self.source_filenames)
         image_filenames = sorted(os.listdir(self.image_dir_path))
         i_parents = 0

@@ -17,7 +17,7 @@
 #
 
 u'''\
-Py-Re:VIEW
+Py-Re:VIEW: A Re:VIEW tool written in Python.
 '''
 
 from __future__ import print_function
@@ -33,7 +33,81 @@ import os
 import sys
 import traceback
 
-VERSION='0.23'
+VERSION='0.28'
+
+def lint(args):
+    logger = getLogger(__name__)
+    handler = StreamHandler()
+    logger.setLevel(args.log.upper())
+    handler.setLevel(args.log.upper())
+    logger.addHandler(handler)
+    logger.debug('Start running')
+
+    if args.unacceptable_level == 'CRITICAL':
+        unacceptable_level = CRITICAL
+    elif args.unacceptable_level == 'ERROR':
+        unacceptable_level = ERROR
+    elif args.unacceptable_level == 'WARNING':
+        unacceptable_level = WARNING
+    elif args.unacceptable_level == 'INFO':
+        unacceptable_level = INFO
+    elif args.unacceptable_level == 'DEBUG':
+        unacceptable_level = DEBUG
+    else:
+        raise RuntimeError(u'Unknown level "{}"'
+                           .format(args.unacceptable_level))
+
+    file_path = os.path.abspath(args.filename)
+
+    if not os.path.exists(file_path):
+        logger.error(u'"{}" does not exist'.format(args.filename))
+        return
+
+    elif os.path.isdir(file_path):
+        logger.debug(u'"{}" is a directory.'.format(file_path))
+        source_dir = ReVIEWProject.guess_source_dir(file_path)
+        logger.debug(u'source_dir: {}'.format(source_dir))
+        if not source_dir:
+            logger.error(u'Failed to detect source_dir')
+            return
+        project = ReVIEWProject(source_dir, logger=logger)
+        project.parse_source_files()
+        try:
+            parser = Parser(project=project,
+                            ignore_threshold=INFO,
+                            abort_threshold=unacceptable_level,
+                            logger=logger)
+            for filename in project.source_filenames:
+                logger.debug('Parsing "{}"'.format(filename))
+                path = os.path.normpath(u'{}/{}'.format(project.source_dir,
+                                                        filename))
+                parser.parse_file(path, 0, filename)
+                dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
+                parser._dump(dump_func=dump_func)
+        except ParseProblem:
+            logger.error(traceback.format_exc())
+    else:
+        logger.debug(u'"{}" is a file. Interpret a single script.'
+                     .format(args.filename))
+        try:
+            source_dir = os.path.dirname(file_path)
+            project = ReVIEWProject(source_dir, logger=logger)
+            project.parse_source_files()
+
+            parser = Parser(project=project,
+                            ignore_threshold=INFO,
+                            abort_threshold=unacceptable_level,
+                            logger=logger)
+            source_name = os.path.basename(args.filename)
+            parser.parse_file(args.filename, 0, source_name)
+            dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
+            parser._dump(dump_func=dump_func)
+        except ParseProblem:
+            logger.error(traceback.format_exc())
+
+
+def lintstr(args):
+    pass
 
 
 def main():
@@ -43,87 +117,52 @@ def main():
     parser.add_argument('--log',
                         default='INFO',
                         help=('Set log level. e.g. DEBUG, INFO, WARN'))
-    parser.add_argument('--debug',
+    parser.add_argument('-d', '--debug',
                         action='store_true',
-                        help=('aliased to --log=DEBUG'))
-    parser.add_argument('-l', '--level_threshold',
-                        action='store',
-                        default='CRITICAL',
-                        help=(u'Error Level for the check.'
-                              u' If everything should be accepted, CRITICAL.'))
+                        help=('Aliased to --log=DEBUG'))
     parser.add_argument('-v', '--version',
                         action='version',
                         version=u"%(prog)s {}".format(VERSION),
                         help=u'Show version and exit.')
+    parser.add_argument('-u', '--unacceptable_level',
+                        action='store',
+                        default='CRITICAL',
+                        help=(u'Error level that aborts the check.'))
+    args = parser.parse_args()
+    lint(args)
+
+
+def devel():
+    parser = ArgumentParser(description=(__doc__),
+                            formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--log',
+                        default='INFO',
+                        help=('Set log level. e.g. DEBUG, INFO, WARN'))
+    parser.add_argument('-d', '--debug',
+                        action='store_true',
+                        help=('Aliased to --log=DEBUG'))
+    parser.add_argument('-v', '--version',
+                        action='version',
+                        version=u"%(prog)s {}".format(VERSION),
+                        help=u'Show version and exit.')
+    subparsers = parser.add_subparsers()
+
+    parser_lint = subparsers.add_parser('lint', help='Do lint check')
+    parser_lint.add_argument('filename')
+    parser_lint.add_argument('-u', '--unacceptable_level',
+                             action='store',
+                             default='CRITICAL',
+                             help=(u'Error level that aborts the check.'))
+    parser_lint.set_defaults(func=lint)
+
+    parser_lintstr = subparsers.add_parser('lintstr',
+                                           help='Check a given string')
+    parser_lintstr.set_defaults(func=lintstr)
+
     args = parser.parse_args()
     if args.debug:
         args.log = 'DEBUG'
-
-    logger = getLogger(__name__)
-    handler = StreamHandler()
-    logger.setLevel(args.log.upper())
-    handler.setLevel(args.log.upper())
-    logger.addHandler(handler)
-    logger.debug('Start running')
-    if args.level_threshold == 'CRITICAL':
-        level_threshold = CRITICAL
-    elif args.level_threshold == 'ERROR':
-        level_threshold = ERROR
-    elif args.level_threshold == 'WARNING':
-        level_threshold = WARNING
-    elif args.level_threshold == 'INFO':
-        level_threshold = INFO
-    elif args.level_threshold == 'DEBUG':
-        level_threshold = DEBUG
-    else:
-        raise RuntimeError(u'Unknown level "{}"'.format(args.level_threshold))
-
-    file_path = os.path.abspath(args.filename)
-
-    if not os.path.exists(file_path):
-        logger.error(u'"{}" does not exist'.format(args.filename))
-        return
-
-    elif os.path.isdir(file_path):
-        logger.debug(u'"{}" is a directory. Interprete the whole project'
-                     .format(file_path))
-        source_dir = ReVIEWProject.guess_source_dir(file_path)
-        logger.debug(u'source_dir: {}'.format(source_dir))
-
-        project = ReVIEWProject(source_dir, logger=logger)
-        project.parse_source_files()
-        project._log_bookmarks()
-        project._log_debug()
-        try:
-            parser = Parser(project=project,
-                            level=level_threshold, logger=logger)
-            for filename in project.source_filenames:
-                logger.debug('Parsing "{}"'.format(filename))
-                path = os.path.normpath(u'{}/{}'.format(project.source_dir,
-                                                        filename))
-                parser.parse(path, 0, filename)
-                dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
-                parser._dump(dump_func=dump_func)
-        except ParseProblem:
-            logger.error(traceback.format_exc())
-            #logger.error(u'{}: {}'.format(type(e).__name__, e))
-    else:
-        logger.debug(u'"{}" is a file. Interpret a single script.'
-                     .format(args.filename))
-        try:
-            source_dir = os.path.dirname(os.path.abspath(file_path))
-            project = ReVIEWProject(source_dir, logger=logger)
-            project.parse_source_files()
-
-            parser = Parser(project=project,
-                            level=level_threshold, logger=logger)
-            source_name = os.path.basename(args.filename)
-            parser.parse(args.filename, 0, source_name)
-            dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
-            parser._dump(dump_func=dump_func)
-        except ParseProblem:
-            logger.error(traceback.format_exc())
-            #logger.error(u'{}: {}'.format(type(e).__name__, e))
+    args.func(args)
 
 
 if __name__ == '__main__':
