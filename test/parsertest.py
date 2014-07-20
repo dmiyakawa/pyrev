@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from parser import Parser
+from pyrev.parser import Parser
 import unittest
 
 from logging import getLogger, DEBUG

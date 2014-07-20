@@ -33,7 +33,7 @@ import os
 import sys
 import traceback
 
-VERSION='0.29'
+VERSION='0.31'
 
 def lint(args):
     logger = getLogger(__name__)
@@ -83,6 +83,7 @@ def lint(args):
                                                         filename))
                 parser.parse_file(path, 0, filename)
                 dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
+            # parser._dump_blocks(dump_func=dump_func)
             parser._dump_problems(dump_func=dump_func)
         except ParseProblem:
             logger.error(traceback.format_exc())

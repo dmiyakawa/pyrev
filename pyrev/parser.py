@@ -28,7 +28,7 @@ local_logger.addHandler(NullHandler())
 
 # Maximum length is temporary.
 r_chap = re.compile(r'^(?P<level>={1,5})(?P<column>[column]?)'
-                    r'(?P<sp>\s*)(?P<title>.+)$')
+                    r'(?P<sp>\s*)(?P<title>.*)$')
 r_end_block = re.compile(r'^//}(?P<junk>.*)$')
 r_begin_block = re.compile(r'^(?P<prefix>//)(?P<content>.+)$')
 r_manual_warn = re.compile(r'^#@(?P<type>.+)\((?P<message>.+)\)$')
@@ -876,33 +876,25 @@ class Parser(object):
         self.ignore_threshold = ignore_threshold
         self.abort_threshold = abort_threshold
 
-        def __block_exist(inline, block_name):
+        def __block_exist(inline, block_names):
+            if type(block_names) == str:
+                block_names = (block_names,)
             inline_id = inline.raw_content 
             for block in self.all_blocks:
-                if (block.name == block_name
+                if (block.name in block_names
                     and len(block.params) > 0
                     and block.params[0] == inline_id):
                     return 
             self._error(inline.line_num,
-                        u'No "{}" block for "{}" while img inline exists.'
-                        .format(block_name, inline_id),
+                        u'Inline for id "{}" found but no block for it.'
+                        .format(inline_id),
                         None)
 
         def __list_block_exist(inline):
-            __block_exist(inline, 'list')
+            __block_exist(inline, ['list', 'listnum'])
 
         def __image_block_exist(inline):
-            image_id = inline.raw_content 
-            for block in self.all_blocks:
-                if (block.name == 'image'
-                    and len(block.params) > 0
-                    and block.params[0] == image_id):
-                    return 
-            self._error(inline.line_num,
-                        u'No "image" block for "{}" while img inline exists.'
-                        .format(image_id),
-                        None)
-
+            __block_exist(inline, ['image'])
 
         def __image_file_exist(block):
             if not self.project:
@@ -1318,6 +1310,26 @@ class Parser(object):
         else:
             dump_func(u'No problem')
 
+    def _dump_blocks(self, dump_func=None):
+        dump_func = dump_func or (lambda x: self.logger.debug(x))
+        if self.all_blocks:
+            dump_func(u'All-Blocks:')
+            for block in self.all_blocks:
+                dump_func(str(block))
+        else:
+            dump_func(u'No block')
+
+    def _dump_inlines(self, dump_func=None):
+        dump_func = dump_func or (lambda x: self.logger.debug(x))
+        if self.all_inlines:
+            dump_func(u'All-Inlines:')
+            for inline in self.all_inlines:
+                dump_func(u' L{} name: "{}", "{}"'
+                          .format(inline.line_num,
+                                  inline.name,
+                                  inline.raw_content))
+        else:
+            dump_func(u'No inline')
 
     def _dump(self, dump_func=None):
         '''
@@ -1337,23 +1349,9 @@ class Parser(object):
             for key in sorted(self.chap_to_bookmark.keys()):
                 bookmark = self.chap_to_bookmark[key]
                 dump_func(u' {}: "{}"'.format(key, bookmark[self.BM_TITLE]))
-        if self.all_blocks:
-            dump_func(u'All-Blocks:')
-            for block in self.all_blocks:
-                dump_func(str(block))
-        else:
-            dump_func(u'No block')
 
-        if self.all_inlines:
-            dump_func(u'All-Inlines:')
-            for inline in self.all_inlines:
-                dump_func(u' L{} name: "{}", "{}"'
-                          .format(inline.line_num,
-                                  inline.name,
-                                  inline.raw_content))
-        else:
-            dump_func(u'No inline')
-
+        self._dump_blocks(dump_func)
+        self._dump_inlines(dump_func)
         self._dump_problems(dump_func)
 
 
