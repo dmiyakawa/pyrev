@@ -649,12 +649,13 @@ class ReVIEWProject(object):
             # e.g. 'chap1-test1.png', 'chap1/test1.png'
             image_filename = image_filenames[i_images]
             rel_path = '{}/{}'.format(self.image_dir, image_filename)
+            abs_path = os.path.normpath('{}/{}'.format(self.image_dir_path,
+                                                       image_filename))
             (head, tail) = os.path.splitext(image_filename)
-
-            if os.path.isdir(rel_path):
+            if os.path.isdir(abs_path):
                 # e.g. rel_path ... 'images/chap1/test1.png'
                 if parent_id == image_filename:
-                    for image_filename2 in os.listdir(rel_path):
+                    for image_filename2 in os.listdir(abs_path):
                         rel_path2 = '{}/{}'.format(rel_path, image_filename2)
                         pi = ProjectImage(rel_path=rel_path2,
                                           parent_filename=parent_filename,
