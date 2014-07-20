@@ -33,7 +33,7 @@ import os
 import sys
 import traceback
 
-VERSION='0.31'
+VERSION='0.32'
 
 def lint(args):
     logger = getLogger(__name__)
