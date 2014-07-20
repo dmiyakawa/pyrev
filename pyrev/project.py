@@ -81,6 +81,25 @@ def _is_appropriate_file(source_dir, filename):
 def _is_appropriate_re_file(source_dir, filename):
     return _verify_re_filename(source_dir, filename) is not None
 
+def _split_path_into_dirs(path):
+    '''
+    a/b/c/d.txt -> ['a', 'b', 'c', 'd.txt']
+    '''
+    (drive, path_and_file) = os.path.splitdrive(path)
+    dirs = []
+    while True:
+        path, _dir = os.path.split(path)
+
+        if _dir:
+            dirs.append(_dir)
+        else:
+            if path:
+                dirs.append(path)
+            break
+    dirs.reverse()
+    return dirs
+
+
 class ProjectImage(object):
     def __init__(self, rel_path, parent_filename, image_dir):
         self.parent_filename = parent_filename
@@ -92,14 +111,23 @@ class ProjectImage(object):
         # e.g. 'images/chap1-image1.png'
         self.rel_path = rel_path
         self.image_dir = image_dir
-        parts = os.path.split(self.rel_path)
-        assert (len(parts) == 2 and parts[0] == self.image_dir)
+        parts = _split_path_into_dirs(self.rel_path)
+        assert ((len(parts) == 2 or len(parts) == 3)
+                and parts[0] == self.image_dir),\
+            'rel_path: "{}", image_dir: "{}"'.format(self.rel_path,
+                                                     self.image_dir)
         # 'chap1-image1.png' -> ('chap1-image1', '.png')
-        (head, tail) = os.path.splitext(parts[1])
-        # e.g. 'chap1-image1' should start with 'chap1-'
-        assert head.startswith('{}-'.format(self.parent_id))
-        # e.g. 'images/chap1-image1.png' -> image1
-        self.id = head[len(self.parent_id)+1:]
+
+        if len(parts) == 3:
+            assert head == self.parent_id
+            (head, tail) = os.path.splitext(parts[2])
+            self.id = head
+        else:
+            (head, tail) = os.path.splitext(parts[1])
+            # e.g. 'chap1-image1' should start with 'chap1-'
+            assert head.startswith('{}-'.format(self.parent_id))
+            # e.g. 'images/chap1-image1.png' -> image1
+            self.id = head[len(self.parent_id)+1:]
         assert self.id
         self.tail = tail
 
@@ -615,36 +643,60 @@ class ReVIEWProject(object):
         # Compare two lists from both tops.
         while (i_parents < len(parent_filenames)
                and i_images < len(image_filenames)):
+            # e.g. 'chap1.re'
             parent_filename  = parent_filenames[i_parents]
             (parent_id, _) = os.path.splitext(parent_filename)
+            # e.g. 'chap1-test1.png', 'chap1/test1.png'
             image_filename = image_filenames[i_images]
             rel_path = '{}/{}'.format(self.image_dir, image_filename)
-
             (head, tail) = os.path.splitext(image_filename)
-            if head.startswith('{}-'.format(parent_id)):
-                # If the image file starts with the id, it should belong
-                # to the parent. Create a new object and append it to a list.
-                # Increment index for the image list only, because
-                # next image file may have same parent.
-                # e.g.
-                # parents: ['chap1.re', 'chap2.re']
-                # images:  ['images/chap1-test1.png', 'images/chap1-test2.png']
-                pi = ProjectImage(rel_path=rel_path,
-                                  parent_filename=parent_filename,
-                                  image_dir=self.image_dir)
-                lst = self.images.setdefault(parent_filename, [])
-                lst.append(pi)
-                i_images += 1
-            elif parent_id < head:
-                # e.g.
-                # parents: ['chap1.re', 'chap2.re']
-                # images:  ['images/chap2-test1.png', 'images/chap3-test2.png']
-                self.images.setdefault(parent_filename, [])
-                i_parents += 1
-            else:
-                self.unmappable_images.append(image_filename)
-                i_images += 1
 
+            if os.path.isdir(rel_path):
+                # e.g. rel_path ... 'images/chap1/test1.png'
+                if parent_id == image_filename:
+                    for image_filename2 in os.listdir(rel_path):
+                        rel_path2 = '{}/{}'.format(rel_path, image_filename2)
+                        pi = ProjectImage(rel_path=rel_path2,
+                                          parent_filename=parent_filename,
+                                          image_dir=self.image_dir)
+                        lst = self.images.setdefault(parent_filename, [])
+                        lst.append(pi)
+                    i_images += 1
+                    i_parents += 1
+                elif parent_id < image_filename:
+                    self.images.setdefault(parent_filename, [])
+                    i_parents += 1
+                else:
+                    self.unmappable_images.append(image_filename)
+                    i_images += 1
+            else:
+                if head.startswith('{}-'.format(parent_id)):
+                    # If the image file starts with the id, it should belong
+                    # to the parent.
+                    # Create a new object and append it to a list.
+                    #
+                    # Increment index for the image list only, because
+                    # next image file may have same parent.
+                    # e.g.
+                    # parents: ['chap1.re', 'chap2.re']
+                    # images:  ['images/chap1-test1.png',
+                    #           'images/chap1-test2.png']
+                    pi = ProjectImage(rel_path=rel_path,
+                                      parent_filename=parent_filename,
+                                      image_dir=self.image_dir)
+                    lst = self.images.setdefault(parent_filename, [])
+                    lst.append(pi)
+                    i_images += 1
+                elif parent_id < head:
+                    # e.g.
+                    # parents: ['chap1.re', 'chap2.re']
+                    # images:  ['images/chap2-test1.png',
+                    #           'images/chap3-test2.png']
+                    self.images.setdefault(parent_filename, [])
+                    i_parents += 1
+                else:
+                    self.unmappable_images.append(image_filename)
+                    i_images += 1
 
     def _log_debug(self, logger=None):
         logger = logger or self.logger

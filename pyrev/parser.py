@@ -519,7 +519,7 @@ class BlockStateMachine(object):
     def _remember_inline(self, inline):
         self.all_inlines.append(inline)
         if self.parser:
-            self.parser.all_inlines.append(inline)
+            self.parser._remember_inline(inline)
 
     def _error(self, line_num, desc, raw_content):
         self.reporter.error(self.source_name, line_num, desc, raw_content)
@@ -876,6 +876,21 @@ class Parser(object):
         self.ignore_threshold = ignore_threshold
         self.abort_threshold = abort_threshold
 
+        def __block_exist(inline, block_name):
+            inline_id = inline.raw_content 
+            for block in self.all_blocks:
+                if (block.name == block_name
+                    and len(block.params) > 0
+                    and block.params[0] == inline_id):
+                    return 
+            self._error(inline.line_num,
+                        u'No "{}" block for "{}" while img inline exists.'
+                        .format(block_name, inline_id),
+                        None)
+
+        def __list_block_exist(inline):
+            __block_exist(inline, 'list')
+
         def __image_block_exist(inline):
             image_id = inline.raw_content 
             for block in self.all_blocks:
@@ -887,6 +902,7 @@ class Parser(object):
                         u'No "image" block for "{}" while img inline exists.'
                         .format(image_id),
                         None)
+
 
         def __image_file_exist(block):
             if not self.project:
@@ -901,9 +917,6 @@ class Parser(object):
                             .format(image_id),
                             block.uni_lines)
                 return
-
-            self.logger.info(u'{}, {}'.format(map(lambda img: img.id, imgs),
-                                              image_id))
             image_exist = reduce(lambda x, y: x or image_id == y.id,
                                  imgs, False)
             if not image_exist:
@@ -944,7 +957,7 @@ class Parser(object):
         # (postparse_check, endfile_check)
         # postparse_check ... called when the inline is ended.
         # endfile_check ... called after the whole file is parsed.
-        self.allowed_inlines = {'list': (None, None),
+        self.allowed_inlines = {'list': (None, __list_block_exist),
                                 'img': (None, __image_block_exist),
                                 'table': (None, None),
                                 'href': (None, None),
@@ -998,6 +1011,11 @@ class Parser(object):
         # Contains all Block objects in flat form.
         self.all_blocks = []
 
+        # Contains Inline objects for the file that is currently parsed.
+        # Those objects should be eventually stored in all_inlines and removed
+        # from this list.
+        self._current_inlines = []
+
         # Contains all Inline objects in flat form.
         self.all_inlines = []
 
@@ -1048,11 +1066,18 @@ class Parser(object):
                         u'Block "{}" is not ended'.format(self.bsm.name),
                         None)
 
-        for inline in self.all_inlines:
+        self._end_of_document()
+
+
+    def _end_of_document(self):
+        for inline in self._current_inlines:
             self._inline_endfile_check(inline)
+            self.all_inlines.append(inline)
+        self._current_inlines = []
 
         for block in self.all_blocks:
             self._block_endfile_check(block)
+        
 
 
     def _parse_line(self, line_num, line, logger=None):
@@ -1158,7 +1183,7 @@ class Parser(object):
                     if ret is None:
                         pass
                     elif type(ret) is Inline:
-                        self.all_inlines.append(ret)
+                        self._remember_inline(ret)
                     else:
                         pass
                 ism.end()
@@ -1254,6 +1279,45 @@ class Parser(object):
             endfile_checker = block_checkers[2]
             endfile_checker(block)
 
+    def _remember_inline(self, inline):
+        self._current_inlines.append(inline)
+        # self.all_inlines.append(inline)
+
+
+    def _dump_problems(self, dump_func=None):
+        dump_func = dump_func or (lambda x: self.logger.debug(x))
+        if not self.reporter:
+            dump_func(u'No reporter')
+            return
+        if self.reporter.problems:
+            dump_func(u'Problems:')
+            problems = self.reporter.problems
+            for problem in problems:
+                problem_name = type(problem).__name__[5]
+                if problem.raw_content:
+                    if type(problem.raw_content) in [str, unicode]:
+                        content = u'"{}"'.format(problem.raw_content.rstrip())
+                    elif type(problem.raw_content) == list:
+                        lst = []
+                        for rc_part in problem.raw_content:
+                            lst.append(rc_part.rstrip())
+                        content = u'\n' + u'\n'.join(lst)
+                else:
+                    content = u''
+                if problem.source_name:
+                    dump_func(u' [{}] {} L{}: {}'
+                              .format(problem_name,
+                                      problem.source_name,
+                                      problem.line_num,
+                                      problem.desc))
+                else:
+                    dump_func(u' [{}] L{}: {}'
+                              .format(problem_name,
+                                      problem.line_num,
+                                      problem.desc))
+        else:
+            dump_func(u'No problem')
+
 
     def _dump(self, dump_func=None):
         '''
@@ -1289,31 +1353,7 @@ class Parser(object):
                                   inline.raw_content))
         else:
             dump_func(u'No inline')
-        if self.reporter and self.reporter.problems:
-            dump_func(u'Problems:')
-            problems = self.reporter.problems
-            for problem in problems:
-                problem_name = type(problem).__name__[5]
-                if problem.raw_content:
-                    if type(problem.raw_content) in [str, unicode]:
-                        content = u'"{}"'.format(problem.raw_content.rstrip())
-                    elif type(problem.raw_content) == list:
-                        lst = []
-                        for rc_part in problem.raw_content:
-                            lst.append(rc_part.rstrip())
-                        content = u'\n' + u'\n'.join(lst)
-                else:
-                    content = u''
-                if problem.source_name:
-                    dump_func(u' [{}] {} L{}: {}'
-                              .format(problem_name,
-                                      problem.source_name,
-                                      problem.line_num,
-                                      problem.desc))
-                else:
-                    dump_func(u' [{}] L{}: {}'
-                              .format(problem_name,
-                                      problem.line_num,
-                                      problem.desc))
+
+        self._dump_problems(dump_func)
 
 

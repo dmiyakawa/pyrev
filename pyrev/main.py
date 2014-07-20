@@ -33,7 +33,7 @@ import os
 import sys
 import traceback
 
-VERSION='0.28'
+VERSION='0.29'
 
 def lint(args):
     logger = getLogger(__name__)
@@ -83,7 +83,7 @@ def lint(args):
                                                         filename))
                 parser.parse_file(path, 0, filename)
                 dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
-                parser._dump(dump_func=dump_func)
+            parser._dump_problems(dump_func=dump_func)
         except ParseProblem:
             logger.error(traceback.format_exc())
     else:
@@ -101,7 +101,7 @@ def lint(args):
             source_name = os.path.basename(args.filename)
             parser.parse_file(args.filename, 0, source_name)
             dump_func = lambda x: sys.stdout.write(u'{}\n'.format(x))
-            parser._dump(dump_func=dump_func)
+            parser._dump_problems(dump_func=dump_func)
         except ParseProblem:
             logger.error(traceback.format_exc())
 
@@ -129,6 +129,8 @@ def main():
                         default='CRITICAL',
                         help=(u'Error level that aborts the check.'))
     args = parser.parse_args()
+    if args.debug:
+        args.log = 'DEBUG'
     lint(args)
 
 
