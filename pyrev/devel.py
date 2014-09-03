@@ -35,7 +35,7 @@ def lintstr(args, logger):
     pass
 
 
-def copy_chapter(args, logger):
+def copy_document(args, logger):
     '''
     Copy a chapter from source to dest. Also copies relevant images.
 
@@ -44,6 +44,17 @@ def copy_chapter(args, logger):
     the original.
     '''
     return utils.copy_document(args.src, args.dst, logger)
+
+
+def move_document(args, logger):
+    '''
+    Copy a chapter from source to dest. Also copies relevant images.
+
+    src must be a specific file in a project
+    dst can be a directory or a file, whose name may be different from
+    the original.
+    '''
+    return utils.move_document(args.src, args.dst, logger)
 
 
 def devel():
@@ -79,10 +90,17 @@ def devel():
 
     # Copy-Document
     parser_ic = subparsers.add_parser('copy-document',
-                                      help='Copy a single document')
+                                      help=u'Copy a single document')
     parser_ic.add_argument('src')
     parser_ic.add_argument('dst')
-    parser_ic.set_defaults(func=copy_chapter)
+    parser_ic.set_defaults(func=copy_document)
+
+    # Move-Document
+    parser_ic = subparsers.add_parser('move-document',
+                                      help=u'Move a single document')
+    parser_ic.add_argument('src')
+    parser_ic.add_argument('dst')
+    parser_ic.set_defaults(func=move_document)
 
     args = parser.parse_args()
     if args.debug:

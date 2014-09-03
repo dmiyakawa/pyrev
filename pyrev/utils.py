@@ -21,7 +21,7 @@ import os
 import shutil
 
 
-def copy_document(source, dest, logger):
+def copy_document(source, dest, logger, **kwargs):
     '''
     Copy a whole document in a single (source) project to another (dest)
     project.
@@ -41,6 +41,8 @@ def copy_document(source, dest, logger):
     '''
     logger.debug(u'Start running copy_chapter "{}" -> "{}"'
                  .format(source, dest))
+    allow_same_project = kwargs.get('allow_same_project', False)
+    remove_source_files = kwargs.get('remove_source_files', False)
 
     if not os.path.exists(source):
         logger.error(u'"{}" does not exist'.format(source))
@@ -58,7 +60,7 @@ def copy_document(source, dest, logger):
             return 1
         # If destination is a directory, we'll use source name as is.
         dest_filename = source_filename
-        dest_dir = os.path.normpath(dest)
+        dest_dir = os.path.abspath(dest)
     else:
         if os.path.exists(dest):
             logger.error(u'"{}" already exists'.format(dest))
@@ -70,20 +72,27 @@ def copy_document(source, dest, logger):
             logger.error(u'Filename "{}" looks inappropriate. Maybe "{}.re"?'
                          .format(dest_filename, dest_filename))
             return 1
-        dest_dir = ReVIEWProject.guess_source_dir(os.path.dirname(dest))
+        dest_dir = ReVIEWProject.guess_source_dir(
+            os.path.dirname(os.path.abspath(dest)))
 
     (dest_parent_id, _) = os.path.splitext(dest_filename)
 
-    logger.debug('source_dir: {}, dest_dir: {}'.format(source_dir, dest_dir))
+    logger.debug(u'source_dir: {}, dest_dir: {}'.format(source_dir, dest_dir))
     if os.path.samefile(source_dir, dest_dir):
-        logger.error('src and dst point to a same directory.')
-        return 1
+        if not allow_same_project:
+            logger.error(u'src and dst point to a same directory ({}).'
+                         .format(source_dir))
+            return 1
+        if source_filename == dest_filename:
+            logger.error(u'src and dst point to a same file ({}).'
+                         .format(source_filename))
+            return 1
 
     source_project = ReVIEWProject(source_dir, logger=logger)
     dest_project = ReVIEWProject(dest_dir, logger=logger)
 
     if dest_project.has_source(dest_filename):
-        logger.error('{} already exists on dest side.'
+        logger.error(u'{} already exists on dest side.'
                      .format(source_filename))
         return 1
 
@@ -94,17 +103,17 @@ def copy_document(source, dest, logger):
     
     if os.path.exists(dest_project.image_dir_path):
         if not os.path.isdir(dest_project.image_dir_path):
-            logger.error('{} is not a directory.'
+            logger.error(u'{} is not a directory.'
                          .format(dest_project.image_dir_path))
             return 1
     else:
         dest_image_dir_path = dest_project.image_dir_path
-        logger.debug('Creating a directory "{}" as an image_dir'
+        logger.debug(u'Creating a directory "{}" as an image_dir'
                      .format(dest_image_dir_path))
         try:
             os.mkdir(dest_image_dir_path)
         except OSError as e:
-            logger.error('Failed to create "{}": {}'
+            logger.error(u'Failed to create "{}": {}'
                          .format(dest_image_dir_path, e))
             return 1
 
@@ -122,12 +131,12 @@ def copy_document(source, dest, logger):
         sub_image_dir = os.path.join(dest_project.image_dir_path,
                                      dest_parent_id)
         if not os.path.exists(sub_image_dir):
-            logger.debug('Creating a directory "{}" for a sub image_dir'
+            logger.debug(u'Creating a directory "{}" for a sub image_dir'
                          .format(sub_image_dir))
             try:
                 os.mkdir(sub_image_dir)
             except OSError as e:
-                logger.error('Failed to create "{}": {}'
+                logger.error(u'Failed to create "{}": {}'
                              .format(sub_image_dir, e))
                 return 1
         for image in source_images:
@@ -135,10 +144,36 @@ def copy_document(source, dest, logger):
                                           image.rel_path)
             dest_image_path = os.path.join(sub_image_dir,
                                            '{}{}'.format(image.id, image.tail))
-            logger.debug('Copying from "{}" to "{}".'
+            logger.debug(u'Copying from "{}" to "{}".'
                          .format(src_image_path, dest_image_path))
             shutil.copyfile(src_image_path, dest_image_path)
 
-    logger.debug('Copying from "{}" to "{}"'.format(source_path, dest_path))
+    logger.debug(u'Copying from "{}" to "{}"'.format(source_path, dest_path))
     shutil.copyfile(source_path, dest_path)
+    
+    if remove_source_files:
+        try:
+            logger.debug(u'Removing "{}"'.format(source_path))
+            os.remove(source_path)
+            if source_images:
+                for image in source_images:
+                    image_path = os.path.join(source_project.source_dir,
+                                              image.rel_path)
+                    logger.debug(u'Removing "{}"'.format(image_path))
+                    os.remove(image_path)
+                sub_image_dir = os.path.join(source_project.image_dir_path,
+                                             source_images[0].parent_id)
+                if (os.path.isdir(sub_image_dir) and
+                    len(os.listdir(sub_image_dir)) == 0):
+                    logger.debug(u'Removing "{}"'.format(sub_image_dir))
+                    os.rmdir(sub_image_dir)
+        except OSError as e:
+            logger.error(u'Failed to remove source files: "{}"'.format(e))
+            return 1
     return 0
+
+
+def move_document(source, dest, logger, **kwargs):
+    kwargs['allow_same_project'] = True
+    kwargs['remove_source_files'] = True
+    return copy_document(source, dest, logger, **kwargs)

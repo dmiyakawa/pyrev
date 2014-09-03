@@ -18,14 +18,14 @@
 import os
 from setuptools import setup, find_packages
 
-from pyrev import main
+from pyrev import version
 
 README = open(os.path.join(os.path.dirname(__file__), 'README.rst')).read()
 
 # os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(name='pyrev',
-      version=main.VERSION,
+      version=version.VERSION,
       author='Daisuke Miyakawa',
       author_email='d.miyakawa@gmail.com',
       description='Another Re:VIEW (lint) tool',

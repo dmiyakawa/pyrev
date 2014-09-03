@@ -275,11 +275,12 @@ class ReVIEWProject(object):
 
         # Look for "catalog.yml" or legacy old catalog files.
         self._recognize_catalog_files()
-        if (not self.parts) and (not self.chaps):
-            self.logger.info(u'Failed to recognize book structure in {}.'
+        if (self.parts is None) and (self.chaps is None):
+            self.logger.warn(u'Failed to recognize book structure in {}.'
                              .format(source_dir))
             return False
-        assert (not self.parts) or (not self.chaps)
+        if (not self.parts) and (not self.parts):
+            self.logger.info(u'No chapter found.')
 
         self._recognize_draft_files()
 
@@ -324,7 +325,6 @@ class ReVIEWProject(object):
         check if it is really an appropriate config for Re:VIEW.
         If it looks appropriate, set up member variables too.
         '''
-        self.logger.debug(u'_try_parse_review_config({})'.format(candidate))
         candidate_path = os.path.join(self.source_dir, candidate)
         if not os.path.isfile(candidate_path):
             return False
@@ -735,6 +735,8 @@ class ReVIEWProject(object):
         logger.debug(u'postdef_filenames(len: {}): {}'
                      .format(len(self.postdef_filenames),
                              self.postdef_filenames))
+        logger.debug(u'draft_filenames(len: {}): {}'
+                     .format(len(self.draft_filenames), self.draft_filenames))
         if self.parts:
             logger.debug(u'parts: {}'.format(self.parts))
         elif self.chaps:
