@@ -936,6 +936,18 @@ class Parser(object):
                                     len(block.params), num_params),
                             block.uni_lines)
 
+        def __check_param_num_range(block, num_params_min, num_params_max):
+            err = None
+            if len(block.params) < num_params_min:
+                err = (u'Illegal number of params ("{}": {} < {})'
+                       .format(block.name,
+                               len(block.params), num_params_min))
+            elif len(block.params) > num_params_max:
+                err = (u'Illegal number of params ("{}": {} < {})'
+                       .format(block.name,
+                               num_params_max, len(block.params)))
+            if err:
+                self._error(block.line_num, err, block.uni_lines)
 
         # //noindent
         cbd_0 = lambda block: __check_block_default(block, 0)
@@ -943,7 +955,7 @@ class Parser(object):
         cbd_1 = lambda block: __check_block_default(block, 1)
         # //footnote[fnname][content]
         cbd_2 = lambda block: __check_block_default(block, 2)
-
+        cpnr_23 = lambda block: __check_param_num_range(block, 2, 3)
 
         # https://github.com/kmuto/review/blob/master/doc/format.rdoc
         # (postparse_check, endfile_check)
@@ -971,7 +983,8 @@ class Parser(object):
                                 'code': (None, None),
                                 'chap': (None, None),
                                 'uchar': (None, None),
-                                'raw': (None, None)}
+                                'raw': (None, None),
+                                'comment': (None, None)}
 
         # (preparse_check, postparse_check, endfile_check)
         # firstline_check ... called when the first line is parsed
@@ -983,10 +996,16 @@ class Parser(object):
                                'list': (None, cbd_2, None),
                                'emlist': (None, cbd_1, None),
                                'listnum': (None, cbd_2, None),
-                               'image': (__image_file_exist, cbd_2, None),
+                               'image': (__image_file_exist, cpnr_23, None),
                                'lead': (None, cbd_0, None),
                                'footnote': (None, cbd_2, None),
-                               'noindent': (None, cbd_0, None)}
+                               'noindent': (None, cbd_0, None),
+                               'cmd': (None, cbd_0, None),
+                               'indepimage': (None, cbd_2, None),
+                               'graph': (None, cpnr_23, None),
+                               'quote': (None, cbd_0, None),
+                               'bibpaper': (None, cbd_2, None),
+                               'texequation': (None, cbd_0, None)}
 
         self.source_name = None
         self.reporter = ProblemReporter(ignore_threshold=INFO,

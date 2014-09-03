@@ -31,7 +31,6 @@ import os
 import sys
 import traceback
 
-
 def lint(args, logger):
     logger.debug('Start running "lint".')
 
