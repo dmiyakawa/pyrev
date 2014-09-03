@@ -101,13 +101,19 @@ def _split_path_into_dirs(path):
 
 
 class ProjectImage(object):
+    '''
+    Right now this class supports two types of image structures.
+    1. images/chap1-image1.png
+    2. images/chap1/image1.png
+    '''
+
     def __init__(self, rel_path, parent_filename, image_dir):
         self.parent_filename = parent_filename
-        (head, tail) = os.path.splitext(parent_filename)
+        (parent_head, parent_tail) = os.path.splitext(parent_filename)
         # chap1.re -> 'chap1'
-        self.parent_id = head
+        self.parent_id = parent_head
         # '.re'
-        self.parent_tail = tail
+        self.parent_tail = parent_tail
         # e.g. 'images/chap1-image1.png'
         self.rel_path = rel_path
         self.image_dir = image_dir
@@ -119,16 +125,18 @@ class ProjectImage(object):
         # 'chap1-image1.png' -> ('chap1-image1', '.png')
 
         if len(parts) == 3:
-            assert head == self.parent_id
+            # ['images', 'chap1', 'image1.png']
+            assert parts[1] == self.parent_id
             (head, tail) = os.path.splitext(parts[2])
             self.id = head
-        else:
+        else:  # len(parts) == 2
             (head, tail) = os.path.splitext(parts[1])
             # e.g. 'chap1-image1' should start with 'chap1-'
             assert head.startswith('{}-'.format(self.parent_id))
             # e.g. 'images/chap1-image1.png' -> image1
             self.id = head[len(self.parent_id)+1:]
         assert self.id
+        # '.png'
         self.tail = tail
 
     def __str__(self):
@@ -188,17 +196,18 @@ class ReVIEWProject(object):
         self.source_dir = None
         self._catalog_files = []
         # Contains all chapter files for this project.
-        # This includes predef/postdef files.
         # Each name does not contain source_dir part.
+        # This includes predef/postdef files,
+        # while it does NOT include possible draft filenames.
         self.source_filenames = []
 
         self.predef_filenames = []
         self.postdef_filenames = []
 
-        # Possible "draft" files that are not included in catalog.yml
-        # but in the source_dir.
-        # TODO:-)
-        # self.draft_filenames = []
+        # Possible "draft" files.
+        # The "draft" files are re files which are in source_dir, but
+        # not included in catalog.yml.
+        self.draft_filenames = []
 
         # Either self.parts or self.chaps is available. NOT both.
         # When PART (in catalog.yml or as a single file) is available,
@@ -214,6 +223,8 @@ class ReVIEWProject(object):
         self.chaps = None
 
         self.image_dir = None
+        # Contains a mapping from filenames to images relevant to the files.
+        # This will include all mapping including draft filenames.
         # {'chap1.re': [ProjectImage, ...]}
         self.images = {}
 
@@ -244,8 +255,7 @@ class ReVIEWProject(object):
 
     def init(self, source_dir, **kwargs):
         '''
-        Initializes this instance. Returns True when successful.
-
+        Initializes this instance.
         Returns True when successful.
         Returns False otherwise, where this instance will not be usable.
         '''
@@ -271,14 +281,17 @@ class ReVIEWProject(object):
             return False
         assert (not self.parts) or (not self.chaps)
 
+        self._recognize_draft_files()
+
         self.image_dir = kwargs.get('image_dir', 'images')
         self.image_dir_path = os.path.normpath('{}/{}'.format(self.source_dir,
                                                               self.image_dir))
-        if not os.path.isdir(self.image_dir_path):
+        self.images = {}
+        if os.path.isdir(self.image_dir_path):
+            self._recognize_image_files()
+        else:
             self.logger.info(u'"{}"({}) is not a directory'
                              .format(self.image_dir, self.image_dir_path))
-        self.images = {}
-        self._recognize_image_files()
 
         # TODO: Check more..
 
@@ -333,12 +346,10 @@ class ReVIEWProject(object):
                              .format(candidate, e))
         return False
 
-
     def _recognize_catalog_files(self):
         '''
         Scans catalogue files and detect book structure.
         '''
-        self.logger.debug(u'_recognize_catalog_files()')
         if self._recognize_new_catalog_files():
             return True
         return self._recognize_legacy_catalog_files()
@@ -409,7 +420,7 @@ class ReVIEWProject(object):
                 for filename in part_chaps:
                     self.source_filenames.append(filename)
         else:
-            logger.debug('Considered to be plain chaps structure')
+            logger.debug('Considered to be plain chaps without part.')
             self.chaps = []
             self.parts = None
             try:
@@ -442,7 +453,6 @@ class ReVIEWProject(object):
         which has been used before Re:VIEW version 1.3.
         '''
         logger = self.logger
-        self.logger.debug('_recognize_legacy_catalog_files()')
         # First check if at least "CHAPS" file exists or not.
         # If not, abort this procedure immediately.
         chaps_path = _verify_filename(self.source_dir, 'CHAPS', logger)
@@ -532,7 +542,6 @@ class ReVIEWProject(object):
                     continue
                 self.postdef_filenames.append(filename)
                 self.source_filenames.append(filename)
-
         return True
         
     def _detect_parts(self, part_content):
@@ -540,6 +549,14 @@ class ReVIEWProject(object):
         for line in part_content:
             part_titles.append(line.rstrip())
         return part_titles
+
+    def _recognize_draft_files(self):
+        logger = self.logger
+        for re_file in filter(lambda x: x.endswith('.re'),
+                              os.listdir(self.source_dir)):
+            if re_file not in self.source_filenames:
+                self.draft_filenames.append(re_file)
+        return True
 
     def parse_source_files(self, logger=None):
         '''
@@ -631,12 +648,21 @@ class ReVIEWProject(object):
         else:
             return False
 
+    def has_source(self, re_file):
+        return re_file in self.all_filenames()
+
+    def get_images_for_source(self, re_file):
+        return self.images.get(re_file, [])
+
+    def all_filenames(self):
+        return self.source_filenames + self.draft_filenames
+
     def _recognize_image_files(self):
         if not os.path.isdir(self.image_dir_path):
             self.logger.debug(u'No image_dir ("{}")'
                               .format(self.image_dir_path))
             return
-        parent_filenames = sorted(self.source_filenames)
+        parent_filenames = sorted(self.all_filenames())
         image_filenames = sorted(os.listdir(self.image_dir_path))
         i_parents = 0
         i_images = 0

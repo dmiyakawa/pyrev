@@ -7,15 +7,17 @@ from logging import getLogger, DEBUG
 
 local_logger = getLogger(__name__)
 
+def _enable_local_logger():
+    from logging import StreamHandler
+    handler = StreamHandler()
+    handler.setLevel(DEBUG)
+    local_logger.setLevel(DEBUG)
+    local_logger.addHandler(handler)
 
-# from logging import StreamHandler
-# handler = StreamHandler()
-# handler.setLevel(DEBUG)
-# local_logger.setLevel(DEBUG)
-# local_logger.addHandler(handler)
+def _disable_local_logger():
+    from logging import NullHandler
+    local_logger.addHandler(NullHandler())
 
-from logging import NullHandler
-local_logger.addHandler(NullHandler())
 
 def _msg(problems):
     if len(problems) > 1:
@@ -75,5 +77,9 @@ class ParserTest(unittest.TestCase):
         self.assertEqual((u'b', u'C-]', 2),
                          (inline.name, inline.raw_content, inline.line_num))
 
+
+
+
 if __name__ == '__main__':
+    _disable_local_logger()
     unittest.main()

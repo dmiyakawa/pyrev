@@ -19,29 +19,21 @@
 u'''\
 Py-Re:VIEW: A Re:VIEW tool written in Python.
 '''
-
-from __future__ import print_function
-
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from logging import getLogger, StreamHandler
 from logging import CRITICAL, ERROR, WARNING, INFO, DEBUG
 
 from parser import Parser, ParseProblem
 from project import ReVIEWProject
+from version import VERSION
 
 import os
 import sys
 import traceback
 
-VERSION='0.31'
 
-def lint(args):
-    logger = getLogger(__name__)
-    handler = StreamHandler()
-    logger.setLevel(args.log.upper())
-    handler.setLevel(args.log.upper())
-    logger.addHandler(handler)
-    logger.debug('Start running')
+def lint(args, logger):
+    logger.debug('Start running "lint".')
 
     if args.unacceptable_level == 'CRITICAL':
         unacceptable_level = CRITICAL
@@ -107,10 +99,6 @@ def lint(args):
             logger.error(traceback.format_exc())
 
 
-def lintstr(args):
-    pass
-
-
 def main():
     parser = ArgumentParser(description=(__doc__),
                             formatter_class=ArgumentDefaultsHelpFormatter)
@@ -132,40 +120,14 @@ def main():
     args = parser.parse_args()
     if args.debug:
         args.log = 'DEBUG'
-    lint(args)
 
+    logger = getLogger(__name__)
+    handler = StreamHandler()
+    logger.setLevel(args.log.upper())
+    handler.setLevel(args.log.upper())
+    logger.addHandler(handler)
 
-def devel():
-    parser = ArgumentParser(description=(__doc__),
-                            formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--log',
-                        default='INFO',
-                        help=('Set log level. e.g. DEBUG, INFO, WARN'))
-    parser.add_argument('-d', '--debug',
-                        action='store_true',
-                        help=('Aliased to --log=DEBUG'))
-    parser.add_argument('-v', '--version',
-                        action='version',
-                        version=u"%(prog)s {}".format(VERSION),
-                        help=u'Show version and exit.')
-    subparsers = parser.add_subparsers()
-
-    parser_lint = subparsers.add_parser('lint', help='Do lint check')
-    parser_lint.add_argument('filename')
-    parser_lint.add_argument('-u', '--unacceptable_level',
-                             action='store',
-                             default='CRITICAL',
-                             help=(u'Error level that aborts the check.'))
-    parser_lint.set_defaults(func=lint)
-
-    parser_lintstr = subparsers.add_parser('lintstr',
-                                           help='Check a given string')
-    parser_lintstr.set_defaults(func=lintstr)
-
-    args = parser.parse_args()
-    if args.debug:
-        args.log = 'DEBUG'
-    args.func(args)
+    lint(args, logger)
 
 
 if __name__ == '__main__':
