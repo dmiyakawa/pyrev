@@ -61,7 +61,11 @@ def lint(args, logger):
         if not source_dir:
             logger.error(u'Failed to detect source_dir')
             return
-        project = ReVIEWProject(source_dir, logger=logger)
+        project = ReVIEWProject.instantiate(source_dir, logger=logger)
+        if not project:
+            logger.error(u'Failed to instanciate Re:VIEW Project ({}).'
+                         .format(source_dir))
+            return
         project.parse_source_files()
         try:
             parser = Parser(project=project,

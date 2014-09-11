@@ -39,7 +39,7 @@ local_logger = setup_logger(__name__, _debug)
 class RegressionTest(unittest.TestCase):
     def _test_no_problem(self, project_name):
         source_dir = os.path.join(projects_dir, project_name)
-        project = ReVIEWProject(source_dir, logger=local_logger)
+        project = ReVIEWProject.instantiate(source_dir, logger=local_logger)
         parser = Parser(project=project, logger=local_logger)
         self.assertEqual(0, len(parser.reporter.problems))
         return (project, parser)
@@ -59,13 +59,15 @@ class RegressionTest(unittest.TestCase):
             dest = dest_dir  
             shutil.copytree(os.path.join(projects_dir, 'project2'),
                             dest_dir)
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(1, len(dest_project.all_filenames()))
             self.assertEqual(0, len(dest_project
                                     .get_images_for_source('project1.re')))
             self.assertEqual(0, utils.copy_document(source, dest,
                                                     local_logger))
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(2, len(dest_project.all_filenames()))
             images = dest_project.get_images_for_source('project1.re')
             self.assertEqual(1, len(images))
@@ -81,13 +83,15 @@ class RegressionTest(unittest.TestCase):
             dest = os.path.join(dest_dir, 'projectX.re')
             shutil.copytree(os.path.join(projects_dir, 'project2'),
                             dest_dir)
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(1, len(dest_project.all_filenames()))
             self.assertEqual(0, len(dest_project
                                     .get_images_for_source('project1.re')))
             self.assertEqual(0, utils.copy_document(source, dest,
                                                     local_logger))
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(2, len(dest_project.all_filenames()))
             images = dest_project.get_images_for_source('projectX.re')
             self.assertEqual(1, len(images))
@@ -105,21 +109,25 @@ class RegressionTest(unittest.TestCase):
             shutil.copytree(os.path.join(projects_dir, 'project2'), dest_dir)
             source = os.path.join(source_dir, 'project1.re')
             dest = os.path.join(dest_dir, 'projectX.re')
-            source_project = ReVIEWProject(source_dir, logger=local_logger)
+            source_project = ReVIEWProject.instantiate(source_dir,
+                                                       logger=local_logger)
             self.assertEqual(2, len(source_project.all_filenames()))
             self.assertTrue('project1.re' in source_project.all_filenames())
 
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(1, len(dest_project.all_filenames()))
             self.assertEqual(0, len(dest_project
                                     .get_images_for_source('project1.re')))
             self.assertEqual(0, utils.move_document(source, dest,
                                                     local_logger))
-            source_project = ReVIEWProject(source_dir, logger=local_logger)
+            source_project = ReVIEWProject.instantiate(source_dir,
+                                                       logger=local_logger)
             self.assertEqual(1, len(dest_project.all_filenames()))
             self.assertTrue('project1.re' not in dest_project.all_filenames())
 
-            dest_project = ReVIEWProject(dest_dir, logger=local_logger)
+            dest_project = ReVIEWProject.instantiate(dest_dir,
+                                                     logger=local_logger)
             self.assertEqual(2, len(dest_project.all_filenames()))
             images = dest_project.get_images_for_source('projectX.re')
             self.assertEqual(1, len(images))
@@ -136,13 +144,15 @@ class RegressionTest(unittest.TestCase):
 
             source = os.path.join(source_dir, 'project1.re')
             dest = os.path.join(source_dir, 'projectX.re')
-            source_project = ReVIEWProject(source_dir, logger=local_logger)
+            source_project = ReVIEWProject.instantiate(source_dir,
+                                                       logger=local_logger)
             self.assertEqual(2, len(source_project.all_filenames()))
             self.assertTrue('project1.re' in source_project.all_filenames())
             self.assertTrue('projectX.re' not in source_project.all_filenames())
             self.assertEqual(0, utils.move_document(source, dest, local_logger))
 
-            source_project = ReVIEWProject(source_dir, logger=local_logger)
+            source_project = ReVIEWProject.instantiate(source_dir,
+                                                       logger=local_logger)
             local_logger.debug('HELLO')
             source_project._log_debug(logger=local_logger)
             # Note that both become draft files because catalog.yml won't

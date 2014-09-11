@@ -21,7 +21,6 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from logging import getLogger, StreamHandler
 
 from main import lint
-from project import ReVIEWProject
 from version import VERSION
 
 import utils

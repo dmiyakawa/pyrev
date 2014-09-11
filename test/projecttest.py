@@ -19,7 +19,7 @@ local_logger = setup_logger(__name__, _debug)
 class ProjectTest(unittest.TestCase):
     def test_check_draft(self):
         source_dir = os.path.join(_projects_dir, 'project1')
-        project = ReVIEWProject(source_dir, logger=local_logger)
+        project = ReVIEWProject.instantiate(source_dir, logger=local_logger)
         self.assertEqual(1, len(project.source_filenames))
         self.assertTrue('project1.re' in project.source_filenames)
         self.assertEqual(1, len(project.draft_filenames))

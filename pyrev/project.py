@@ -187,13 +187,22 @@ class ReVIEWProject(object):
     # True if column. False (or None) otherwise.
     BM_IS_COLUMN = 'is_column'
 
-    def __init__(self, source_dir, **kwargs):
-        self.reset()
-        self.init(os.path.normpath(source_dir), **kwargs)
+    @staticmethod
+    def instantiate(source_dir, **kwargs):
+        driver = ReVIEWProject(source_dir,
+                               logger=kwargs.get('logger'))
+        if driver.init():
+            return driver
+        else:
+            return None
 
-    def reset(self):
+    def __init__(self, source_dir, logger=None):
         # Where the whole source files are.
-        self.source_dir = None
+        self.source_dir = os.path.normpath(source_dir)
+        self.logger = logger or local_logger
+        self._reset()
+
+    def _reset(self):
         self._catalog_files = []
         # Contains all chapter files for this project.
         # Each name does not contain source_dir part.
@@ -253,16 +262,14 @@ class ReVIEWProject(object):
         # Not ready until init() is finished successfully.
         self.ready = False
 
-    def init(self, source_dir, **kwargs):
+    def init(self, **kwargs):
         '''
         Initializes this instance.
         Returns True when successful.
         Returns False otherwise, where this instance will not be usable.
         '''
-        logger = kwargs.get('logger') or local_logger
-        self.logger = logger
-        self.source_dir = source_dir
-        logger.debug(u'init(source_dir: "{}")'.format(self.source_dir))
+        logger = kwargs.get('logger') or self.logger
+        logger.debug(u'ReVIEWProject.init()')
 
         first_candidate = kwargs.get('first_candidate')
         if not self._find_and_parse_review_config(first_candidate):
@@ -277,7 +284,7 @@ class ReVIEWProject(object):
         self._recognize_catalog_files()
         if (self.parts is None) and (self.chaps is None):
             self.logger.warn(u'Failed to recognize book structure in {}.'
-                             .format(source_dir))
+                             .format(self.source_dir))
             return False
         if (not self.parts) and (not self.parts):
             self.logger.info(u'No chapter found.')
@@ -635,6 +642,7 @@ class ReVIEWProject(object):
         Removes possible tempfiles from the project.
         '''
         logger = logger or self.logger
+        logger.debug('ReVIEWProject.remove_tempfiles()')
         bookname = self.bookname or u'book'
         temp_dirs = map(lambda x: x.format(bookname),
                         [u'{}', u'{}-pdf', u'{}-epub', u'{}-log'])

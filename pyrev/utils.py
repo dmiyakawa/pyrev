@@ -88,8 +88,16 @@ def copy_document(source, dest, logger, **kwargs):
                          .format(source_filename))
             return 1
 
-    source_project = ReVIEWProject(source_dir, logger=logger)
-    dest_project = ReVIEWProject(dest_dir, logger=logger)
+    source_project = ReVIEWProject.instantiate(source_dir, logger=logger)
+    dest_project = ReVIEWProject.instantiate(dest_dir, logger=logger)
+    if not source_project:
+        logger.error(u'Failed to instanciate Re:VIEW Project ({}).'
+                     .format(source_dir))
+        return 1
+    if not dest_project:
+        logger.error(u'Failed to instanciate Re:VIEW Project ({}).'
+                     .format(dest_dir))
+        return 1
 
     if dest_project.has_source(dest_filename):
         logger.error(u'{} already exists on dest side.'
