@@ -41,22 +41,23 @@ from logging import getLogger, NullHandler
 local_logger = getLogger(__name__)
 local_logger.addHandler(NullHandler())
 
-def _verify_filename(source_dir, filename, logger=local_logger):
+def _verify_filename(source_dir, filename, logger=None):
     '''
     Checks if a given file is appropriate to use in drivers.
     Returns an absolute path for the filename. None otherwise.
     '''
+    logger = logger or local_logger
     abs_path = os.path.abspath(os.path.join(source_dir, filename))
     if source_dir not in abs_path:
-        logger.warn(u'"{}" does not point to file in dir "{}". Ignoring.'
+        logger.info(u'"{}" does not point to file in dir "{}".'
                     .format(filename, source_dir))
         return None
     if not os.path.exists(abs_path):
-        logger.warn(u'"{}" does not exist in "{}". Ignoring.'
+        logger.info(u'"{}" does not exist in "{}".'
                     .format(filename, source_dir))
         return None
     if os.path.islink(abs_path):
-        logger.warn(u'"{}" is a symlink. Ignore.'.format(filename))
+        logger.info(u'"{}" is a symlink.'.format(filename))
         return None
     logger.debug('"{}" is verified as safe'.format(abs_path))
     return abs_path
@@ -80,6 +81,7 @@ def _is_appropriate_file(source_dir, filename):
 
 def _is_appropriate_re_file(source_dir, filename):
     return _verify_re_filename(source_dir, filename) is not None
+
 
 def _split_path_into_dirs(path):
     '''
@@ -191,7 +193,7 @@ class ReVIEWProject(object):
     def instantiate(source_dir, **kwargs):
         driver = ReVIEWProject(source_dir,
                                logger=kwargs.get('logger'))
-        if driver.init():
+        if driver.init(**kwargs):
             return driver
         else:
             return None
@@ -203,10 +205,16 @@ class ReVIEWProject(object):
         self._reset()
 
     def _reset(self):
+        self.config_file = None
+        self.catalog_file = None
+
+        # catalog.yml (for newer projects),
+        # or CHAPS/PREDEF/POSTDEF etc. (for older projects).
         self._catalog_files = []
+
         # Contains all chapter files for this project.
         # Each name does not contain source_dir part.
-        # This includes predef/postdef files,
+        # This includes files in predef_filenames and postdef_filenames,
         # while it does NOT include possible draft filenames.
         self.source_filenames = []
 
@@ -240,9 +248,6 @@ class ReVIEWProject(object):
         # image files those are not mapped
         self.unmappable_images = []
 
-        # Should have correct file name for config.yml (e.g. u'config.yml')
-        self.config_file_name = None
-
         self.title = u''
         self.author = u''
         self.description = u''
@@ -262,26 +267,52 @@ class ReVIEWProject(object):
         # Not ready until init() is finished successfully.
         self.ready = False
 
-    def init(self, **kwargs):
+    def init(self,
+             config_file=None,
+             catalog_file=None,
+             logger=None,
+             **kwargs):
         '''
         Initializes this instance.
         Returns True when successful.
         Returns False otherwise, where this instance will not be usable.
+
+        config_file: a filename of a review config file.
+        catalog_file: a filename of a review catalog file.
         '''
         logger = kwargs.get('logger') or self.logger
         logger.debug(u'ReVIEWProject.init()')
 
-        first_candidate = kwargs.get('first_candidate')
-        if not self._find_and_parse_review_config(first_candidate):
-            logger.info(u'Failed to find config.yml or relevant.')
-            return False
+        if config_file:
+            logger.debug(u'config_file is specified ("{}"). Try pasing it.'
+                         .format(config_file))
+            if not self._try_parse_config_file(config_file):
+                logger.error('Failed to parse config file "{}"'
+                             .format(config_file))
+                return False
+        else:
+            logger.debug('config_file is not specified. Find suitable one.')
+            if not self._find_and_parse_config_file():
+                logger.info(u'Failed to find config.yml or relevant.')
+                return False
 
         # Just for debugging.
         assert self.bookname is not None
-        assert self.review_config_name is not None
+        assert self.config_file is not None
 
-        # Look for "catalog.yml" or legacy old catalog files.
-        self._recognize_catalog_files()
+        if catalog_file:
+            logger.debug(u'catalog_file is specified ("{}"). Try parsing it.'
+                         .format(catalog_file))
+            if not self._try_parse_catalog_file(catalog_file):
+                logger.error('Failed to parse catalog file "{}"'
+                             .format(catalog_file))
+                return False
+        else:
+            logger.debug('catalog_file is not specified. Find suitable one(s).')
+            if not self._recognize_catalog_files():
+                logger.info(u'Failed to find config.yml or relevant.')
+                return False
+        
         if (self.parts is None) and (self.chaps is None):
             self.logger.warn(u'Failed to recognize book structure in {}.'
                              .format(self.source_dir))
@@ -308,38 +339,42 @@ class ReVIEWProject(object):
         self.ready = True
         return True
 
-    def _find_and_parse_review_config(self, first_candidate=None, logger=None):
-        if not logger: logger = self.logger
+    def _find_and_parse_config_file(self, logger=None):
+        logger = logger or self.logger
         candidates = ['config.yml', 'config.yaml',
                       'sample.yml', 'sample.yaml']
-        if first_candidate:
-            # Should be evaluated first.
-            candidates.insert(0, first_candidate)
-            # Remove dup without breaking list order.
-            candidates = sorted(set(candidates), key=candidates.index)
         # Iterates possible files and try parsing them.
         # When one looks config file, we use it silently.
         for candidate in candidates:
-            if self._try_parse_review_config(candidate):
+            if self._try_parse_config_file(candidate):
                 logger.debug(u'"{}" is used as Re:VIEW config file.'
                              .format(candidate))
                 return True
         return False
 
-    def _try_parse_review_config(self, candidate):
+    def _try_parse_config_file(self, candidate, logger=None):
         '''
         Try parsing a given config file (e.g. config.yml) and
         check if it is really an appropriate config for Re:VIEW.
         If it looks appropriate, set up member variables too.
+
+        Returns True if parsing the file is successful.
+        Returns False otherwise.
         '''
-        candidate_path = os.path.join(self.source_dir, candidate)
+        logger = logger or self.logger
+        candidate_path = os.path.normpath(os.path.join(self.source_dir,
+                                                       candidate))
         if not os.path.isfile(candidate_path):
+            logger.error(u'Did not find config_file "{}".'.format(candidate))
             return False
+        if self.source_dir not in candidate_path:
+            logger.error(u'"{}" is not in source_dir'.format(candidate))
+            return False
+
         try:
             yaml_data = yaml.safe_load(open(candidate_path))
             if yaml_data.has_key(u'bookname'):
                 self.bookname = yaml_data[u'bookname']
-                self.review_config_name = candidate
                 self.yaml_data = yaml_data
 
                 # Followings are considered to be all optional in driver.
@@ -347,63 +382,68 @@ class ReVIEWProject(object):
                 self.author = yaml_data.get(u'aut')
                 self.description = yaml_data.get(u'description', u'')
                 self.coverimage = yaml_data.get(u'coverimage', u'')
+                self.config_file = candidate
                 return True
         except Exception as e:
-            self.logger.info(u'Error during parsing {}: {}'
-                             .format(candidate, e))
+            logger.info(u'Error during parsing {}: {}'.format(candidate, e))
         return False
 
-    def _recognize_catalog_files(self):
+    def _try_parse_catalog_file(self, catalog_file, logger=None):
         '''
-        Scans catalogue files and detect book structure.
+        Try parsing a single catalog file, which must be in new format
+        (so called "catalog yaml"), not older format
+        (with PART/CHAPS/PREDEF/POSTDEF).
+
+        Returns True if parsing the file is successful.
+        Returns False otherwise.
         '''
-        if self._recognize_new_catalog_files():
-            return True
-        return self._recognize_legacy_catalog_files()
-
-    def _recognize_new_catalog_files(self):
-        logger = self.logger
-        filename = 'catalog.yml'
-        catalog_yml_path = _verify_filename(self.source_dir, filename)
-        if not catalog_yml_path:
-            filename = 'catalog.yaml'
-            catalog_yml_path = _verify_filename(self.source_dir, filename)
-            if not catalog_yml_path:
-                return False
-
-        self._catalog_files.append(filename)
+        logger = logger or self.logger
+        catalog_yml_path = _verify_filename(self.source_dir, catalog_file,
+                                            logger=logger)
+        if not catalog_yml_path: return False
+        logger.debug(u'catalog_yml path: "{}"'.format(catalog_yml_path))
         yaml_data = yaml.load(open(catalog_yml_path))
-        if not yaml_data.has_key('CHAPS'):
-            return False
-        if (type(yaml_data['CHAPS']) is not list
+
+        if (not yaml_data.has_key('CHAPS')
+            or type(yaml_data['CHAPS']) is not list
             or len(yaml_data['CHAPS']) == 0):
+            logger.info(u'CHAPS elem is not appropriate.')
             return False
+
+        predef_filenames = []
+        source_filenames = []
+        postdef_filenames = []
+        source_filenames = []
+        parts = None
+        chaps = None
 
         try:
             if yaml_data.get('PREDEF'):
                 for filename in map(lambda x: x.strip(), yaml_data['PREDEF']):
                     if not _is_appropriate_file(self.source_dir, filename):
-                        logger.debug(u'Ignoring {}'.format(filename))
+                        logger.info((u'Ignoring "{}" because the file looks'
+                                     u' inappropriate'
+                                     u' (not available, invalid, etc')
+                                    .format(filename))
                         continue
-                    self.predef_filenames.append(filename)
-                    self.source_filenames.append(filename)
+                    predef_filenames.append(filename)
+                    source_filenames.append(filename)
         except:
             # This may happen when PREDEF contains inappropriate data.
             logger.waring('Failed to parse PREDEF. Ignoring..')
 
+        # We are sure CHAPS is available since we checked it above.
         chap = yaml_data['CHAPS'][0]
         if type(chap) is dict:
-            logger.debug('Considered to be chaps-with-part structure')
-            # Considered to be chaps with part.
             # e.g.
             # CHAPS:
             #   - {"First PART": [ch01.re, ch02.re]}
             #   - {"Second PART": [ch03.re, ch04.re]}
             #
-            # Each dictionary must contain just one entry.
-            # Otherwise Re:VIEW itself messes up everything :-P
-            self.chaps = None
-            self.parts = []
+            # Assume each dictionary must contain just one entry.
+            logger.debug(u'Considered to be chaps-with-part structure.')
+            chaps = None
+            parts = []
             for part_content in yaml_data['CHAPS']:
                 if len(part_content) != 1:
                     logger.info(u'Malformed PART content: "{}"'
@@ -423,20 +463,20 @@ class ReVIEWProject(object):
                     logger.info(u'Malformed chaps exist in PART: {}'
                                 .format(part_chaps))
                     return False
-                self.parts.append((part_title, part_chaps))
+                parts.append((part_title, part_chaps))
                 for filename in part_chaps:
-                    self.source_filenames.append(filename)
+                    source_filenames.append(filename)
         else:
-            logger.debug('Considered to be plain chaps without part.')
-            self.chaps = []
-            self.parts = None
+            logger.debug(u'Considered to be plain chaps without part.')
+            chaps = []
+            parts = None
             try:
                 for filename in map(lambda x: x.strip(), yaml_data['CHAPS']):
                     if not _is_appropriate_re_file(self.source_dir, filename):
                         logger.debug(u'Ignoring {}'.format(filename))
                         continue
-                    self.chaps.append(filename)
-                    self.source_filenames.append(filename)
+                    chaps.append(filename)
+                    source_filenames.append(filename)
             except:
                 logger.error('Failed to parse CHAPS. Exitting')
                 return False
@@ -447,19 +487,42 @@ class ReVIEWProject(object):
                     if not _is_appropriate_file(self.source_dir, filename):
                         logger.debug(u'Ignoring {}'.format(filename))
                         continue
-                    self.postdef_filenames.append(filename)
-                    self.source_filenames.append(filename)
+                    postdef_filenames.append(filename)
+                    source_filenames.append(filename)
         except:
             logger.waring('Failed to parse POSTDEF. Ignoring..')
 
+        self.predef_filenames = predef_filenames
+        self.parts = parts
+        self.chaps = chaps
+        self.postdef_filenames = postdef_filenames
+        self.source_filenames = source_filenames
+        self.catalog_file = catalog_file
+        self._catalog_files.append(catalog_file)
         return True
 
-    def _recognize_legacy_catalog_files(self):
+    def _recognize_catalog_files(self, logger=None):
+        '''
+        Scans new and legacy catalog files to detect a project structure.
+        New projects with catalog.yml/catalog.yaml will be prioritized.
+        '''
+        logger = logger or self.logger
+        if self._recognize_new_catalog_files(logger=logger):
+            return True
+        return self._recognize_legacy_catalog_files(logger=logger)
+
+    def _recognize_new_catalog_files(self, logger=None):
+        logger = logger or self.logger
+        for candidate in ['catalog.yml', 'config.yaml']:
+            if self._try_parse_catalog_file(candidate, logger):
+                return True
+
+    def _recognize_legacy_catalog_files(self, logger=None):
         '''
         Tries recognizing old catalog files (CHAPS, PREDEF, POSTDEF, PART)
         which has been used before Re:VIEW version 1.3.
         '''
-        logger = self.logger
+        logger = logger or self.logger
         # First check if at least "CHAPS" file exists or not.
         # If not, abort this procedure immediately.
         chaps_path = _verify_filename(self.source_dir, 'CHAPS', logger)
@@ -468,11 +531,19 @@ class ReVIEWProject(object):
             return False
         self._catalog_files.append('CHAPS')
 
+        catalog_files = []
+        predef_filenames = []
+        source_filenames = []
+        postdef_filenames = []
+        source_filenames = []
+        parts = None
+        chaps = None
+
         # After checking CHAPS existence, we handle PREDEF before actually
         # looking at CHAPS content, to let the system treat .re files in
         # PREDEF before ones in CHAPS.
         if _is_appropriate_file(self.source_dir, 'PREDEF'):
-            self._catalog_files.append('PREDEF')
+            catalog_files.append('PREDEF')
             predef_path = os.path.join(self.source_dir, 'PREDEF')
             for line in file(predef_path):
                 filename = line.rstrip()
@@ -481,8 +552,8 @@ class ReVIEWProject(object):
                 if not _is_appropriate_file(self.source_dir, filename):
                     logger.debug(u'Ignore {}'.format(filename))
                     continue
-                self.predef_filenames.append(filename)
-                self.source_filenames.append(filename)
+                predef_filenames.append(filename)
+                source_filenames.append(filename)
 
         # Now handle CHAPS and PART.
         part_titles = None
@@ -497,19 +568,18 @@ class ReVIEWProject(object):
             # Note: PART may be just empty while the file itself exists.
             logger.debug('Valid part information found.')
             # PART file is available.
-            self.parts = []
-            self.chaps = None
-
+            parts = []
             current_part = 0
-            chaps = []
+            chaps = None
+            part_chaps = []
             for line in file(chaps_path):
                 filename = line.rstrip()
                 # If empty line appears in CHAPS.
                 if not filename:
                     if current_part < len(part_titles):
-                        self.parts.append((part_titles[current_part], chaps))
+                        parts.append((part_titles[current_part], part_chaps))
                         current_part += 1
-                        chaps = []
+                        part_chaps = []
                     else:
                         # If there's no relevant part name, ReVIEW will
                         # just ignore the empty line, and thus all the
@@ -520,13 +590,13 @@ class ReVIEWProject(object):
                         logger.debug(u'Ignore {}'.format(filename))
                         continue
                     # Insert the chapter into internal structures.
-                    chaps.append(filename)
-                    self.source_filenames.append(filename)
-            self.parts.append((part_titles[current_part], chaps))
+                    part_chaps.append(filename)
+                    source_filenames.append(filename)
+            parts.append((part_titles[current_part], part_chaps))
         else:
             logger.debug('No valid part information found.')
-            self.parts = None
-            self.chaps = []
+            parts = None
+            chaps = []
             for line in file(chaps_path):
                 filename = line.rstrip()
                 if not filename:
@@ -534,11 +604,11 @@ class ReVIEWProject(object):
                 if not _is_appropriate_re_file(self.source_dir, filename):
                     logger.debug(u'Ignore {}'.format(filename))
                     continue
-                self.chaps.append(filename)
-                self.source_filenames.append(filename)
+                chaps.append(filename)
+                source_filenames.append(filename)
 
         if _is_appropriate_file(self.source_dir, 'POSTDEF'):
-            self._catalog_files.append('POSTDEF')
+            catalog_files.append('POSTDEF')
             postdef_path = os.path.join(self.source_dir, 'POSTDEF')
             for line in file(postdef_path):
                 filename = line.rstrip()
@@ -547,8 +617,16 @@ class ReVIEWProject(object):
                 if not _is_appropriate_file(self.source_dir, filename):
                     logger.debug(u'Ignore {}'.format(filename))
                     continue
-                self.postdef_filenames.append(filename)
-                self.source_filenames.append(filename)
+                postdef_filenames.append(filename)
+                source_filenames.append(filename)
+
+        self.predef_filenames = predef_filenames
+        self.parts = parts
+        self.chaps = chaps
+        self.postdef_filenames = postdef_filenames
+        self.source_filenames = source_filenames
+        self.catalog_file = None
+        self._catalog_files += catalog_files
         return True
         
     def _detect_parts(self, part_content):
@@ -567,7 +645,7 @@ class ReVIEWProject(object):
 
     def parse_source_files(self, logger=None):
         '''
-        Parsees all Re:VIEW files and prepare internal structure.
+        Parses all Re:VIEW files and prepare internal structure.
         '''
         logger = logger or self.logger
         if self.parts is None and self.chaps is None:
@@ -663,6 +741,10 @@ class ReVIEWProject(object):
         return self.images.get(re_file, [])
 
     def all_filenames(self):
+        '''
+        Returns all possible .re files that can be source of output.
+        Note draft should come after self.source_filenames.
+        '''
         return self.source_filenames + self.draft_filenames
 
     def _recognize_image_files(self):
@@ -733,26 +815,34 @@ class ReVIEWProject(object):
                     self.unmappable_images.append(image_filename)
                     i_images += 1
 
+    def _get_debug_info(self):
+        lst = []
+        lst.append(u'config_file: "{}"'.format(self.config_file))
+        if self.catalog_file:
+            lst.append(u'catalog_file: "{}"'.format(self.catalog_file))
+        elif self._catalog_files:
+            lst.append(u'catalog_files: {}'.format(self._catalog_files))
+        else:
+            lst.append(u'No catalog file.')
+        lst.append(u'source_filenames(len: {}): {}'
+                   .format(len(self.source_filenames), self.source_filenames))
+        lst.append(u'predef_filenames(len: {}): {}'
+                   .format(len(self.predef_filenames), self.predef_filenames))
+        lst.append(u'postdef_filenames(len: {}): {}'
+                   .format(len(self.postdef_filenames),
+                           self.postdef_filenames))
+        if self.parts:
+            lst.append(u'parts: {}'.format(self.parts))
+        elif self.chaps:
+            lst.append(u'chaps: {}'.format(self.chaps))
+        else:
+            lst.append(u'No parts or chaps')
+        return lst
+
     def _log_debug(self, logger=None):
         logger = logger or self.logger
-        logger.debug(u'catalog_files: {})'.format(self._catalog_files))
-        logger.debug(u'source_filenames(len: {}): {}'
-                     .format(len(self.source_filenames), self.source_filenames))
-        logger.debug(u'predef_filenames(len: {}): {}'
-                     .format(len(self.predef_filenames), self.predef_filenames))
-        logger.debug(u'postdef_filenames(len: {}): {}'
-                     .format(len(self.postdef_filenames),
-                             self.postdef_filenames))
-        logger.debug(u'draft_filenames(len: {}): {}'
-                     .format(len(self.draft_filenames), self.draft_filenames))
-        if self.parts:
-            logger.debug(u'parts: {}'.format(self.parts))
-        elif self.chaps:
-            logger.debug(u'chaps: {}'.format(self.chaps))
-        else:
-            logger.debug(u'No parts or chaps')
-        logger.debug(u'Re:VIEW config file: "{}"'
-                     .format(self.review_config_name))
+        for line in self._get_debug_info():
+            logger.debug(line)
 
     def _format_bookmark(self, bookmark):
         return ((u'{} "{}"'
