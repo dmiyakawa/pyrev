@@ -1,9 +1,9 @@
-= pyrev: Re:VIEW lint tool written in Python
-== "What is this?"
+# pyrev: Re:VIEW lint tool written in Python
+## "What is this?"
 
 Re:VIEW lint tool with Python.
 
-== "Does this replace Re:VIEW tool written in Ruby?"
+## "Does this replace Re:VIEW tool written in Ruby?"
 
 No. Absolutely no.
 
@@ -12,7 +12,7 @@ like pdf, epub, etc.
 
 As I said first, this just checks input.
 
-== "Then, ...what is this?"
+## "Then, ...what is this?"
 
 This is part of my project which makes use of Re:VIEW.
 The tool itself is written in Python and currently not open to everyone.
@@ -21,7 +21,7 @@ I found some of utility in the project is still useful enough even though
 the tool is half-baken.
 
 
-== "Well, I'm not sure what you're saying."
+## "Well, I'm not sure what you're saying."
 
 Sorry for my poor explanation.
 
@@ -30,7 +30,7 @@ at this point.. Just cling to the original Re:VIEW tool written in Ruby.
 
 I'm working hard to make things done. Please stay tuned.
 
-== "Can I contribute? :-)"
+## "Can I contribute? :-)"
 
 Yes welcome. Basically. Possibly. Maybe.
 
